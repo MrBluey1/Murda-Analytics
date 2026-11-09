@@ -33,6 +33,25 @@ svg text{fill:var(--m);font-size:11px}
 .bx{transform-box:fill-box;transform-origin:bottom;animation:grow .7s cubic-bezier(.2,.8,.2,1) backwards}@keyframes grow{from{transform:scaleY(0)}}.bx:hover{fill-opacity:1;filter:brightness(1.2)}
 .dot{opacity:0;animation:in .4s forwards}.dot:hover{r:7}
 .sk{height:70px;border-radius:12px;background:linear-gradient(90deg,var(--p) 25%,var(--p2) 50%,var(--p) 75%);background-size:200% 100%;animation:sh 1.2s infinite}@keyframes sh{to{background-position:-200% 0}}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--b);position:relative;margin:18px 0 14px}
+.tab{background:none;border:0;color:var(--m);padding:10px 18px;cursor:pointer;font:inherit;transition:color .2s}.tab:hover,.tab.on{color:var(--t)}
+.ink{position:absolute;bottom:-1px;height:2px;background:var(--g);border-radius:2px;transition:left .3s cubic-bezier(.2,.8,.2,1),width .3s cubic-bezier(.2,.8,.2,1)}
+.pane{animation:in .35s cubic-bezier(.2,.7,.2,1)}
+.scroll{overflow-x:auto}
+table.st{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+table.st th{color:var(--m);font-weight:600;font-size:12px}table.st th,table.st td{padding:7px 8px;text-align:right;white-space:nowrap}
+table.st th:first-child,table.st td:first-child{text-align:left;width:auto}table.st th:not(:first-child),table.st td:not(:first-child){width:1%;padding-left:16px}table.st tbody tr{border-top:1px solid #1d1d25;transition:background .15s}table.st tbody tr:hover{background:var(--p2)}
+.gh{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;text-align:center}
+.team{display:flex;flex-direction:column;align-items:center;gap:6px}.team img{width:56px;height:56px;object-fit:contain}
+.big{font-size:44px;font-weight:700;font-variant-numeric:tabular-nums}
+.logo-s{width:20px;height:20px;object-fit:contain;margin-right:8px;vertical-align:middle}
+.ph{display:inline-block;width:36px;height:36px;border-radius:50%;object-fit:cover;background:var(--p2);margin-right:10px;flex:none}
+.hit .l{display:flex;align-items:center}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--b);border-top-color:var(--g);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}@keyframes sp{to{transform:rotate(360deg)}}
+.cmp{display:grid;grid-template-columns:1fr 1.6fr 1fr;align-items:center;padding:8px 4px;border-bottom:1px solid #1d1d25;font-variant-numeric:tabular-nums;transition:background .15s}.cmp:hover{background:var(--p2)}
+.cmp .lb{text-align:center;color:var(--m);font-size:13px}.cmp .v{font-weight:600}.cmp .v:last-child{text-align:right}
+.na{color:var(--m);font-style:italic}
+.game{cursor:pointer}.game:hover{transform:translateY(-2px)}
 .err{color:var(--r);background:#ff5d6c14;border:1px solid #ff5d6c40;padding:10px 14px;border-radius:10px}
 details summary{cursor:pointer;color:var(--m)}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.path{stroke-dashoffset:0}.dot{opacity:1}}
@@ -42,7 +61,7 @@ details summary{cursor:pointer;color:var(--m)}
 <main id="app"></main>
 <script>
 const $=(s,e=document)=>e.querySelector(s);
-const PROXY=location.protocol.startsWith("http")&&location.port==="8787";
+const PROXY=location.protocol.startsWith("http")&&["localhost","127.0.0.1"].includes(location.hostname);
 const J=async(u)=>{let r;try{r=await fetch(PROXY?"/proxy?u="+encodeURIComponent(u):u)}catch(e){throw new Error(PROXY?"network blocked or offline":"browser blocked the request; start the local server with: node server.js")}
  if(!r.ok)throw new Error(r.status+" from "+new URL(u).hostname);return r.json()};
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -86,33 +105,37 @@ const A=async u=>{let err;
  const d=await r.json().catch(()=>({}));
  if(r.status===404)throw new Error("not collected yet. Snapshots only include players listed in config/tracked.json");
  if(!r.ok||!d.ok)throw new Error(d.error||"snapshot error "+r.status);
- if(/players\?/.test(u)){const q=decodeURIComponent(u.split("q=")[1]||"").toLowerCase();d.data={players:d.data.players.filter(p=>p.name.toLowerCase().includes(q))}}
+ if(/players\?/.test(u)){const q=decodeURIComponent(u.split("q=")[1]||"").toLowerCase();d.data={players:d.data.players.filter(p=>fold(p.name).includes(fold(q)))}}
  return{...d,static:true,fallback:!!PROXY}};
 const pretty=k=>k.replace(/([a-z])([A-Z])/g,"$1 $2").replace(/^./,c=>c.toUpperCase());
+const fold=s=>String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[đĐ]/g,"d").toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim();
 const viaApi=(k,label)=>({label,src:"ESPN/MLB/NHL public APIs via local API, or GitHub Actions snapshot (unofficial)",
- async search(q){return (await A(`/api/${k}/players?q=${encodeURIComponent(q)}`)).data.players},
- async logs(p){const d=(await A(`/api/${k}/players/${p.id}/gamelog`)).data,stats={};
+ async search(q){const d=await A(`/api/${k}/players?q=${encodeURIComponent(q)}`),a=d.data.players;a.dir=d.meta?.directory;return a},
+ async teams(q){return (await A(`/api/${k}/teams?q=${encodeURIComponent(q)}`)).data.teams},
+ async roster(t){return (await A(`/api/${k}/teams/${encodeURIComponent(t.id)}/roster${t.path?"?path="+encodeURIComponent(t.path):""}`)).data.players},
+ async logs(p){if(k==="soccer")throw new Error("Season stats and game logs for soccer players are not available from any free source I could verify. Per-match player statistics are in the game box score: Live Games, then click a match.");
+  const d=(await A(`/api/${k}/players/${p.id}/gamelog`)).data,stats={};
   d.statKeys.forEach(key=>stats[pretty(key)]=x=>x[key]);
   return{stats,games:d.games.map(g=>({date:g.date,opp:g.opponent,home:g.home,raw:g.stats}))}}});
-if(!PROXY&&STATIC_BASE){P.mlb=viaApi("mlb","MLB");P.nhl=viaApi("nhl","NHL")}
-Object.assign(P,{nba:viaApi("nba","NBA"),wnba:viaApi("wnba","WNBA"),nfl:viaApi("nfl","NFL"),ncaab:viaApi("ncaab","NCAA Basketball"),ncaaf:viaApi("ncaaf","NCAA Football")});
-const KEY={NBA:"nba",WNBA:"wnba",NFL:"nfl",MLB:"mlb",NHL:"nhl",NCAAF:"ncaaf",NCAAB:"ncaab","Premier League":"epl","La Liga":"laliga",MLS:"mls","Champions League":"ucl"};
+Object.assign(P,{mlb:viaApi("mlb","MLB"),nhl:viaApi("nhl","NHL"),nba:viaApi("nba","NBA"),wnba:viaApi("wnba","WNBA"),nfl:viaApi("nfl","NFL"),soccer:viaApi("soccer","Soccer"),ncaab:viaApi("ncaab","NCAA Basketball"),ncaaf:viaApi("ncaaf","NCAA Football")});
+const KEY={NBA:"nba",WNBA:"wnba",NFL:"nfl",MLB:"mlb",NHL:"nhl",NCAAF:"ncaaf",NCAAB:"ncaab","Premier League":"epl","La Liga":"laliga",Bundesliga:"bundesliga","Serie A":"seriea","Ligue 1":"ligue1","Saudi Pro League":"saudi",MLS:"mls","Champions League":"ucl"};
 
 /* ---------- LIVE SCORES (ESPN public endpoints, unofficial) ---------- */
-const LEAGUES={NBA:"basketball/nba",WNBA:"basketball/wnba",NFL:"football/nfl",MLB:"baseball/mlb",NHL:"hockey/nhl","NCAAF":"football/college-football","NCAAB":"basketball/mens-college-basketball","Premier League":"soccer/eng.1","La Liga":"soccer/esp.1",MLS:"soccer/usa.1","Champions League":"soccer/uefa.champions"};
-let lg="NBA",liveTimer;
+const LEAGUES={NBA:"basketball/nba",WNBA:"basketball/wnba",NFL:"football/nfl",MLB:"baseball/mlb",NHL:"hockey/nhl","NCAAF":"football/college-football","NCAAB":"basketball/mens-college-basketball","Premier League":"soccer/eng.1","La Liga":"soccer/esp.1",Bundesliga:"soccer/ger.1","Serie A":"soccer/ita.1","Ligue 1":"soccer/fra.1","Saudi Pro League":"soccer/ksa.1",MLS:"soccer/usa.1","Champions League":"soccer/uefa.champions"};
+let lg="NBA",liveTimer,gameTimer;
 async function live(){
  clearTimeout(liveTimer);
- $("#app").innerHTML=`<div class="view"><div class="bar" id="lgs">${Object.keys(LEAGUES).map(k=>`<button class="chip ${k===lg?"on":""}" data-l="${k}">${k}</button>`).join("")}</div><div id="gm" class="grid">${'<div class="sk"></div>'.repeat(6)}</div><p class="m" id="ts"></p></div>`;
+ $("#app").innerHTML=`<div class="view"><div class="bar" id="lgs">${Object.keys(LEAGUES).map(k=>`<button class="chip ${k===lg?"on":""}" data-l="${k}">${k}</button>`).join("")}</div><div id="gm" class="grid">${'<div class="sk"></div>'.repeat(6)}</div><p class="m" id="ts"></p><p class="m">Click any game for its team and player statistics.</p></div>`;
  $("#lgs").onclick=e=>{if(e.target.dataset.l){lg=e.target.dataset.l;live()}};
+ $("#gm").onclick=$("#gm").onkeydown=ev=>{if(ev.type==="keydown"&&ev.key!=="Enter")return;const c=ev.target.closest("[data-id]");if(c)game(KEY[lg],c.dataset.id)};
  let first=true;
  const load=async()=>{
   if(!$("#gm"))return;
   if(document.hidden){liveTimer=setTimeout(load,30e3);return}
   let delay=60e3;
   try{const r=await A(`/api/${KEY[lg]}/scoreboard`),gs=r.data.games;
-   $("#gm").innerHTML=gs.length?gs.map((g,i)=>{const row=t=>`<div class="row"><span>${esc(t?.name)}</span><b>${g.state==="scheduled"?"":esc(t?.score)}</b></div>`;
-    return`<div class="card game" ${first?`style="animation:in .4s ${i*40}ms backwards"`:'style="animation:none"'}>${g.state==="live"?'<span class="live">● LIVE</span>':""}${row(g.away)}${row(g.home)}<span class="m">${esc(g.detail)}</span></div>`}).join(""):'<div class="card m">No games scheduled in this league right now.</div>';
+   $("#gm").innerHTML=gs.length?gs.map((g,i)=>{const row=t=>`<div class="row"><span>${t?.logo?`<img class="logo-s" src="${esc(t.logo)}" alt="" loading="lazy" onerror="this.style.display='none'">`:""}${esc(t?.name)}</span><b>${g.state==="scheduled"?"":esc(t?.score)}</b></div>`;
+    return`<div class="card game" data-id="${esc(g.id)}" tabindex="0" role="button" aria-label="Open game details" ${first?`style="animation:in .4s ${i*40}ms backwards"`:'style="animation:none"'}>${g.state==="live"?'<span class="live">● LIVE</span>':""}${row(g.away)}${row(g.home)}<span class="m">${esc(g.detail)}</span></div>`}).join(""):'<div class="card m">No games scheduled in this league right now.</div>';
    const age=Date.now()-Date.parse(r.meta.fetchedAt);
    $("#ts").textContent=r.static?`Source: ESPN scoreboard snapshot collected by GitHub Actions at ${new Date(r.meta.fetchedAt).toLocaleString()}${r.fallback?" (local API unavailable, using fallback)":""}. Snapshots refresh about every 15 min and can lag; this is not real-time. Status when collected: ${r.meta.status}.${age>36e5?" WARNING: this snapshot is over 1 hour old.":""}`:`Source: ESPN public scoreboard via local API (unofficial). Status: ${r.meta.status}. Fetched ${new Date(r.meta.fetchedAt).toLocaleTimeString()} (${r.meta.cache}).${r.meta.stale?" STALE: provider failed, showing last good data.":""}${r.meta.status==="live"?" Auto-refreshing every 20s.":""}`;
    if(r.static)delay=300e3;else if(r.meta.status==="live")delay=20e3;first=false;
@@ -121,36 +144,89 @@ async function live(){
  load();
 }
 
+/* ---------- GAME DETAILS ---------- */
+async function game(key,id){
+ clearTimeout(liveTimer);clearTimeout(gameTimer);
+ $("#app").innerHTML=`<div class="view"><button class="chip" id="back">← Live games</button><div id="gh" style="margin-top:12px"><div class="sk"></div></div><div class="tabs" role="tablist" id="tabs"><button class="tab on" role="tab" data-t="team" aria-selected="true">Team Statistics</button><button class="tab" role="tab" data-t="players" aria-selected="false">Player Statistics</button><span class="ink" id="ink"></span></div><div id="gp"><div class="sk"></div></div><p class="m" id="gts"></p></div>`;
+ $("#back").onclick=()=>live();
+ let G=null,tab="team",first=true;
+ const val=v=>v==null||v===""?'<span class="na">n/a</span>':esc(v);
+ const ink=()=>{const b=$(`.tab[data-t="${tab}"]`),k=$("#ink");if(b&&k){k.style.left=b.offsetLeft+"px";k.style.width=b.offsetWidth+"px"}};
+ const logo=t=>t.logo?`<img src="${esc(t.logo)}" alt="" onerror="this.style.display='none'">`:"";
+ const head=()=>{const st=G.status,badge=st.state==="live"?'<span class="live">● LIVE</span>':st.state==="completed"?'<span class="m">FINAL</span>':'<span class="m">UPCOMING</span>';
+  const tm=t=>`<div class="team">${logo(t)}<b>${esc(t.name)}</b><div class="big">${st.state==="scheduled"?"–":esc(t.score)}</div></div>`;
+  $("#gh").innerHTML=`<div class="card"><div class="m" style="text-align:center;margin-bottom:10px">${esc(G.league)}${G.date?" · "+esc(new Date(G.date).toLocaleString()):""}</div><div class="gh">${tm(G.away)}<div>${badge}<div class="m">${esc(st.detail)}${st.clock&&st.state==="live"&&!String(st.detail).includes(st.clock)?" · "+esc(st.clock):""}</div></div>${tm(G.home)}</div></div>`};
+ const teamPane=()=>{const T=G.teamStats;
+  if(!T.available)return`<div class="card m">${esc(T.note)}${G.status.state==="scheduled"?" The game has not started yet.":""}</div>`;
+  return`<div class="card"><div class="cmp" style="font-weight:700"><span>${esc(G.away.abbr||G.away.name)}</span><span class="lb">&nbsp;</span><span style="text-align:right">${esc(G.home.abbr||G.home.name)}</span></div>${T.rows.map(r=>`<div class="cmp"><span class="v">${val(r.away)}</span><span class="lb">${esc(r.label)}</span><span class="v">${val(r.home)}</span></div>`).join("")}${T.unavailable.length?`<p class="m" style="margin-bottom:0">Not provided by ESPN for this game: ${esc(T.unavailable.join(", "))}.</p>`:""}</div>`};
+ const tbl=g=>{const aS=g.rows.some(r=>r.starter),n=g.columns.length;
+  if(!g.rows.length)return'<p class="m">No players listed.</p>';
+  return`<div class="scroll">${g.name?`<p class="m" style="margin:10px 0 4px;text-transform:capitalize">${esc(g.name)}</p>`:""}<table class="st"><thead><tr><th>Player</th>${aS?"<th>Role</th>":""}${g.columns.map(c=>`<th title="${esc(c.title)}">${esc(c.label)}</th>`).join("")}</tr></thead><tbody>${g.rows.map(r=>r.dnp?`<tr><td>${esc(r.name)}</td>${aS?"<td>Bench</td>":""}<td colspan="${n}" class="na" style="text-align:left">DNP${r.reason?" – "+esc(r.reason):""}</td></tr>`:`<tr><td>${esc(r.name)}${r.jersey?` <span class="m">#${esc(r.jersey)}</span>`:""}${r.pos?` <span class="m">${esc(r.pos)}</span>`:""}</td>${aS?`<td>${r.starter?"Starter":r.subbedIn?"Sub (in)":"Bench"}</td>`:""}${g.columns.map(c=>`<td>${val(r.stats[c.key])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`};
+ const playerPane=()=>{const Pl=G.players;
+  if(!Pl.available)return`<div class="card m">The provider has not published player statistics for this game${G.status.state==="scheduled"?" (it has not started)":""}.</div>`;
+  return Pl.teams.map(t=>`<div class="card"><div class="bar" style="margin-bottom:4px"><h3 style="margin:0;display:flex;align-items:center">${t.team.logo?`<img class="logo-s" src="${esc(t.team.logo)}" alt="" onerror="this.style.display='none'">`:""}${esc(t.team.name)}</h3></div>${t.groups.map(tbl).join("")}</div>`).join("")+`<p class="m">${esc(Pl.note)}</p>`};
+ const pane=anim=>{if(G)$("#gp").innerHTML=`<div class="${anim?"pane":""}">${tab==="team"?teamPane():playerPane()}</div>`};
+ $("#tabs").onclick=e=>{const b=e.target.closest(".tab");if(!b)return;tab=b.dataset.t;document.querySelectorAll(".tab").forEach(x=>{x.classList.toggle("on",x===b);x.setAttribute("aria-selected",String(x===b))});ink();pane(true)};
+ ink();
+ if(!PROXY){$("#gh").innerHTML='';$("#gp").innerHTML='<div class="err">Game details need the local server. Run node server.js and open http://localhost:8787. GitHub snapshots only contain scoreboards.</div>';return}
+ const load=async()=>{
+  if(!$("#gh"))return;
+  if(document.hidden){gameTimer=setTimeout(load,30e3);return}
+  let delay=60e3;
+  try{const r=await A(`/api/${key}/games/${encodeURIComponent(id)}`);G=r.data;head();pane(first);first=false;
+   $("#gts").textContent=`Source: ESPN game summary via local API (unofficial). Status: ${G.status.state}. Fetched ${new Date(r.meta.fetchedAt).toLocaleTimeString()} (${r.meta.cache}).${r.meta.stale?" STALE: provider failed, showing last good data.":""}${G.status.state==="live"?" Refreshes every 20s; how fresh the stats are depends on ESPN.":""}`;
+   delay=G.status.state==="live"?20e3:G.status.state==="completed"?0:60e3;
+  }catch(x){if(!G){$("#gh").innerHTML="";$("#gp").innerHTML=`<div class="err">Could not load this game: ${esc(x.message)}</div>`}else $("#gts").textContent+=` Refresh failed: ${x.message}`}
+  if(delay)gameTimer=setTimeout(load,delay)};
+ load();
+}
+
 /* ---------- PLAYER RESEARCH ---------- */
-const EXTRA={soccer:["Soccer",[["FotMob","https://www.fotmob.com/search?q="],["Sofascore","https://www.sofascore.com/search?q="]]],
- tennis:["Tennis",[["Sofascore","https://www.sofascore.com/search?q="]]]};
+const EXTRA={tennis:["Tennis",[["Sofascore","https://www.sofascore.com/search?q="]]]};
 const S={sport:"all",ps:"mlb",player:null,data:null,stat:null,thr:null,n:10,err:null,loading:false};
 function research(){
  $("#app").innerHTML=`<div class="view"><div class="card"><div class="bar">
  <select id="sp"><option value="all" ${S.sport==="all"?"selected":""}>All sports</option>${Object.entries(P).map(([k,v])=>`<option value="${k}" ${k===S.sport?"selected":""}>${v.label}</option>`).join("")}${Object.entries(EXTRA).map(([k,v])=>`<option value="${k}" ${k===S.sport?"selected":""}>${v[0]} (links only)</option>`).join("")}</select>
  <input id="q" placeholder="Search any player (e.g. Aaron Judge, Connor McDavid)" style="flex:1;min-width:200px" aria-label="Search player"></div>
- <div id="hits"></div><p class="m" style="margin:8px 0 0">${EXTRA[S.sport]?`${EXTRA[S.sport][0]} player stats are not built into this app yet. Search opens outside sites.`:S.sport==="all"?"All sports searches every league with player data (MLB, NHL, NBA, WNBA, NFL, NCAA). Soccer and Tennis are links only for now.":""}</p></div><div id="out"></div></div>`;
+ <div id="hits"></div><p class="m" style="margin:8px 0 0">${EXTRA[S.sport]?`${EXTRA[S.sport][0]} player stats are not built into this app yet. Search opens outside sites.`:S.sport==="all"?"All sports searches MLB, NHL, NBA, WNBA, NFL and Soccer (current rosters). Pick NCAA from the list to search it. Tennis is links only.":""}</p></div><div id="out"></div></div>`;
  $("#sp").onchange=e=>{S.sport=e.target.value;S.player=null;S.data=null;research()};
- let t;$("#q").oninput=e=>{clearTimeout(t);const q=e.target.value.trim();if(q.length<3){$("#hits").innerHTML="";return}
-  t=setTimeout(async()=>{if(EXTRA[S.sport]){$("#hits").onclick=null;$("#hits").innerHTML=`<div class="res">${EXTRA[S.sport][1].map(([l,u])=>`<a class="chip" target="_blank" rel="noopener" href="${u}${encodeURIComponent(q)}">Search "${esc(q)}" on ${l} ↗</a>`).join("")}</div>`;return}
-  try{const r=await searchAll(q);
-   $("#hits").innerHTML=r.length?r.map((p,i)=>`<div class="hit" tabindex="0" data-i="${i}"><span>${esc(p.name)}</span><span class="m">${esc(P[p.sport].label)} · ${esc(p.pos)} ${esc(p.team)}</span></div>`).join(""):'<p class="m">No matches.</p>';
-   $("#hits").onclick=$("#hits").onkeydown=ev=>{if(ev.type==="keydown"&&ev.key!=="Enter")return;const h=ev.target.closest(".hit");if(h)pick(r[h.dataset.i])}
-  }catch(x){$("#hits").innerHTML=`<div class="err">Search failed: ${esc(x.message)}</div>`}},300)};
+ let t,tok=0;$("#q").oninput=e=>{clearTimeout(t);const q=e.target.value.trim();if(q.length<2){tok++;$("#hits").innerHTML="";return}
+  t=setTimeout(async()=>{const my=++tok;
+  if(EXTRA[S.sport]){$("#hits").onclick=null;$("#hits").innerHTML=`<div class="res">${EXTRA[S.sport][1].map(([l,u])=>`<a class="chip" target="_blank" rel="noopener" href="${u}${encodeURIComponent(q)}">Search "${esc(q)}" on ${l} ↗</a>`).join("")}</div>`;return}
+  $("#hits").innerHTML='<p class="m"><span class="spin"></span>Searching…</p>';
+  try{const [r,tm]=await Promise.all([searchAll(q),searchTeams(q)]);if(my!==tok)return;
+   const img=(u,r)=>u?`<img class="ph" ${r?'style="border-radius:8px;object-fit:contain"':""} src="${esc(u)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`:'<span class="ph"></span>';
+   $("#hits").innerHTML=r.map((p,i)=>`<div class="hit" tabindex="0" data-i="${i}"><span class="l">${img(p.photo)}<span><b>${esc(p.name)}</b><br><span class="m">${esc(p.pos)}${p.pos&&p.team?" · ":""}${esc(p.team)}</span></span></span><span class="m" style="text-align:right">${esc(p.league||P[p.sport].label)}${p.league&&p.league!==P[p.sport].label?`<br>${esc(P[p.sport].label)}`:""}</span></div>`).join("")
+    +(tm.length?`<p class="m" style="margin:10px 0 2px">Teams</p>`+tm.map((x,i)=>`<div class="hit" tabindex="0" data-t="${i}"><span class="l">${img(x.logo,1)}<b>${esc(x.name)}</b></span><span class="m">${esc(x.league)}</span></div>`).join(""):"")
+    +(!r.length&&!tm.length?`<p class="m">No current players or teams match "${esc(q)}". Check the spelling or choose a specific sport. Only players on current rosters are listed.</p>`:"")
+    +(r.incomplete?'<p class="m"><span class="spin"></span>The player directory is still loading, so results may be incomplete. Search again in a few seconds.</p>':"");
+   $("#hits").onclick=$("#hits").onkeydown=ev=>{if(ev.type==="keydown"&&ev.key!=="Enter")return;const h=ev.target.closest(".hit");if(!h)return;if(h.dataset.i!=null)pick(r[h.dataset.i]);else if(h.dataset.t!=null)showRoster(tm[h.dataset.t])}
+  }catch(x){if(my===tok)$("#hits").innerHTML=`<div class="err">Search failed: ${esc(x.message)}</div>`}},250)};
  render();
 }
-async function searchAll(q){const ks=S.sport==="all"?Object.keys(P):[S.sport];
- const rs=await Promise.allSettled(ks.map(k=>P[k].search(q).then(r=>r.map(p=>({...p,sport:k})))));
- const ok=rs.filter(r=>r.status==="fulfilled").flatMap(r=>r.value);
+const searchKeys=()=>S.sport==="all"?Object.keys(P).filter(k=>!/^ncaa/.test(k)):[S.sport];
+async function searchAll(q){
+ const rs=await Promise.allSettled(searchKeys().map(k=>P[k].search(q).then(r=>{const a=r.map(p=>({...p,sport:k}));a.inc=!!(r.dir&&!r.dir.complete);return a})));
+ const ok=rs.filter(r=>r.status==="fulfilled").flatMap(r=>r.value),fq=fold(q);
+ ok.sort((a,b)=>(fold(b.name)===fq)-(fold(a.name)===fq));
+ ok.incomplete=rs.some(r=>r.status==="fulfilled"&&r.value.inc);
  if(!ok.length&&rs.every(r=>r.status==="rejected"))throw rs[0].reason;return ok}
+async function searchTeams(q){
+ const rs=await Promise.allSettled(searchKeys().map(k=>P[k].teams(q).then(r=>r.slice(0,4).map(t=>({...t,sport:k})))));
+ return rs.filter(r=>r.status==="fulfilled").flatMap(r=>r.value).slice(0,8)}
+async function showRoster(t){const o=$("#out");$("#hits").innerHTML="";o.innerHTML='<div class="sk"></div>';
+ try{const pl=await P[t.sport].roster(t);
+  o.innerHTML=`<div class="card view"><div class="bar"><h2 style="margin:0;flex:1">${t.logo?`<img class="logo-s" style="width:32px;height:32px" src="${esc(t.logo)}" alt="" onerror="this.style.display='none'">`:""}${esc(t.name)} <span class="m" style="font-size:14px">${esc(t.league)} · ${pl.length} players</span></h2></div><div id="rost">${pl.map((p,i)=>`<div class="hit" tabindex="0" data-i="${i}"><span class="l">${p.photo?`<img class="ph" src="${esc(p.photo)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`:'<span class="ph"></span>'}<b>${esc(p.name)}</b></span><span class="m">${esc(p.pos)}${p.jersey!==""&&p.jersey!=null?" · #"+esc(p.jersey):""}</span></div>`).join("")||'<p class="m">The provider returned no roster for this team.</p>'}</div></div>`;
+  $("#rost").onclick=$("#rost").onkeydown=ev=>{if(ev.type==="keydown"&&ev.key!=="Enter")return;const h=ev.target.closest(".hit");if(h)pick({...pl[h.dataset.i],sport:t.sport})}
+ }catch(x){o.innerHTML=`<div class="err">Roster failed: ${esc(x.message)}</div>`}}
 async function pick(p){S.ps=p.sport||S.sport;S.player=p;S.loading=true;S.err=null;S.data=null;$("#hits").innerHTML="";render();
  try{const d=await P[S.ps].logs(p);d.games=d.games.filter(g=>g.date);S.data=d;S.stat=Object.keys(d.stats)[0];S.thr=null;
-  if(!d.games.length)S.err=`No ${SEASON} game log returned for ${p.name}.`}catch(x){S.err="Game log failed: "+x.message}
+  if(!d.games.length)S.err=`No ${SEASON} game log returned for ${p.name}. The provider returned zero games, which usually means the player had no major-league games this season. Search results also include minor leaguers and retired players. Try another match or season.`}catch(x){S.err="Game log failed: "+x.message}
  S.loading=false;render()}
 const mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0;
 function render(){const o=$("#out");if(!o)return;
  if(S.loading){o.innerHTML='<div class="sk"></div>';return}
- if(S.err){o.innerHTML=`<div class="err">${esc(S.err)}</div>`;return}
+ if(S.err){const pl=S.player||{};o.innerHTML=`<div class="card"><div class="bar">${pl.photo?`<img class="ph" style="width:48px;height:48px" src="${esc(pl.photo)}" alt="" onerror="this.style.visibility='hidden'">`:""}<h2 style="margin:0;flex:1">${esc(pl.name||"")} <span class="m" style="font-size:14px">${esc(pl.pos||"")} ${esc(pl.team||"")} ${pl.league?"· "+esc(pl.league):""}</span></h2>${[["FotMob","https://www.fotmob.com/search?q="],["Sofascore","https://www.sofascore.com/search?q="],["StatMuse","https://www.statmuse.com/ask?q="]].map(([l,u])=>`<a class="chip" target="_blank" rel="noopener" href="${u}${encodeURIComponent(pl.name||"")}">${l} ↗</a>`).join("")}</div><div class="err">${esc(S.err)}</div></div>`;return}
  if(!S.data){o.innerHTML='<div class="card m">Pick a sport, search a player, then set a threshold. All numbers come from the real game log.</div>';return}
  const d=S.data,f=d.stats[S.stat];
  const all=d.games.map(g=>({...g,v:+f(g.raw)})).filter(g=>Number.isFinite(g.v));
@@ -159,7 +235,7 @@ function render(){const o=$("#out");if(!o)return;
  const ov=vals.filter(v=>v>S.thr).length,un=vals.filter(v=>v<S.thr).length;
  const h=all.filter(g=>g.home),a=all.filter(g=>!g.home);
  const fav=store.get("fav",[]).some(x=>x.sport===S.ps&&x.id===S.player.id);
- o.innerHTML=`<div class="card"><div class="bar"><h2 style="margin:0;flex:1">${esc(S.player.name)} <span class="m" style="font-size:14px">${esc(S.player.pos)} ${esc(S.player.team)} · ${SEASON} season · ${all.length} games</span></h2>
+ o.innerHTML=`<div class="card"><div class="bar">${S.player.photo?`<img class="ph" style="width:48px;height:48px" src="${esc(S.player.photo)}" alt="" onerror="this.style.visibility='hidden'">`:""}<h2 style="margin:0;flex:1">${esc(S.player.name)} <span class="m" style="font-size:14px">${esc(S.player.pos)} ${esc(S.player.team)} ${S.player.league?"· "+esc(S.player.league):""} · ${SEASON} season · ${all.length} games</span></h2>
  <button class="chip" id="fv">${fav?"★ Saved":"☆ Save"}</button>
  ${[["FotMob","https://www.fotmob.com/search?q="],["Sofascore","https://www.sofascore.com/search?q="],["StatMuse","https://www.statmuse.com/ask?q="],...(S.ps==="nba"?[["RealGM","https://basketball.realgm.com/search?q="]]:[])].map(([l,u])=>`<a class="chip" target="_blank" rel="noopener" href="${u}${encodeURIComponent(S.player.name)}">${l} ↗</a>`).join("")}</div>
  <div class="bar"><select id="st">${Object.keys(d.stats).map(k=>`<option ${k===S.stat?"selected":""}>${esc(k)}</option>`).join("")}</select>
@@ -210,7 +286,7 @@ function src(){$("#app").innerHTML=`<div class="view"><div class="card"><h3>Data
 <p class="m">Not yet implemented: NBA/NFL/NCAA/soccer/tennis player game logs, opponent splits, advanced stats. These need a provider decision (ESPN athlete endpoints, football-data.org free key, or open datasets). Nothing here is estimated or generated.</p></div></div>`}
 
 const views={live,research,fav:favs,src};
-function go(v){clearTimeout(liveTimer);document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));$("#app").onclick=null;views[v]()}
+function go(v){clearTimeout(liveTimer);clearTimeout(gameTimer);document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));$("#app").onclick=null;views[v]()}
 $("#nav").onclick=e=>e.target.dataset.v&&go(e.target.dataset.v);
 live();
 </script></body></html>

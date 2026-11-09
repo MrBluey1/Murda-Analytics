@@ -1,0 +1,6 @@
+node_modules/
+data-out/
+out/
+site/
+# Keep the website itself local/private; only the data pipeline is meant for the public repo.
+edge-analytics.html

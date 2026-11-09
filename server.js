@@ -14,4 +14,5 @@ http.createServer(async(req,res)=>{
   }catch(e){res.writeHead(502);res.end(String(e))}
   return}
  fs.readFile(path.join(__dirname,"edge-analytics.html"),(e,d)=>{res.writeHead(200,{"content-type":"text/html"});res.end(d)});
-}).listen(process.env.PORT||8787,()=>console.log("Open http://localhost:"+(process.env.PORT||8787)));
+}).listen(process.env.PORT||8787,()=>{console.log("Open http://localhost:"+(process.env.PORT||8787));
+ if(!process.env.NO_WARM){console.log("Building player directories in the background (first run takes a few minutes; cached for 24h)...");api.warm(["nba","nfl","mlb","nhl","wnba","soccer"]).then(()=>console.log("Player directories ready."))}});
