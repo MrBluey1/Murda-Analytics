@@ -1,57 +1,381 @@
+
 "use strict";
-// Collects snapshots by calling the SAME api.js handlers the local server uses, and writes the JSON envelopes to files.
-// Env: OUT (output dir), MODE ("fast" = scoreboards only, "full" = + standings + tracked players), TRACKED (config path).
-const fs = require("fs"), path = require("path"), api = require("../api");
-const OUT = process.env.OUT || "data-out", MODE = process.env.MODE || "fast";
-const TRACKED = process.env.TRACKED || path.join(__dirname, "../config/tracked.json");
-const SCORE = ["nba", "wnba", "nfl", "ncaaf", "ncaab", "mlb", "nhl", "epl", "laliga", "mls", "ucl"];
-const STANDINGS = [...SCORE, "f1"], PLAYER_SPORTS = ["nba", "wnba", "nfl", "ncaaf", "ncaab", "mlb", "nhl"];
-const now = new Date().toISOString(), norm = s => String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-const readJ = f => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; } };
-const rd = f => readJ(path.join(OUT, f));
-const wr = (f, o) => { const p = path.join(OUT, f); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(o)); };
-function call(p) {
-  return new Promise(resolve => {
-    const res = { code: 200, writeHead(c) { this.code = c; }, end(b) { let j; try { j = JSON.parse(b); } catch { j = { ok: false, error: "bad json from api" }; } resolve({ code: this.code, body: j }); } };
-    api.handle({ method: "GET" }, res, new URL("http://local" + p)).catch(e => resolve({ code: 500, body: { ok: false, error: e.message } }));
+
+// Murda Analytics — Sports Data Collector
+// Environment variables:
+// OUT     = output directory (default: out)
+// MODE    = "fast" or "full" (default: fast)
+// TRACKED = tracked players configuration (default: tracked.json)
+
+const fs = require("fs");
+const path = require("path");
+const api = require("./api");
+
+const ROOT = __dirname;
+const OUT = path.resolve(ROOT, process.env.OUT || "out");
+const MODE = process.env.MODE || "fast";
+const TRACKED = path.resolve(
+  ROOT,
+  process.env.TRACKED || "tracked.json"
+);
+
+const SCORE = [
+  "nba", "wnba", "nfl", "ncaaf", "ncaab",
+  "mlb", "nhl", "epl", "laliga", "mls", "ucl"
+];
+
+const STANDINGS = [...SCORE, "f1"];
+
+const PLAYER_SPORTS = [
+  "nba", "wnba", "nfl", "ncaaf",
+  "ncaab", "mlb", "nhl"
+];
+
+const now = new Date().toISOString();
+
+const norm = (value) =>
+  String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
+if (typeof api.handle !== "function") {
+  throw new Error(
+    'api.js must export a handle function using module.exports = { handle };'
+  );
+}
+
+function readJSON(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function readOutput(file) {
+  return readJSON(path.join(OUT, file));
+}
+
+function writeJSON(file, data) {
+  const destination = path.join(OUT, file);
+
+  fs.mkdirSync(path.dirname(destination), {
+    recursive: true
+  });
+
+  fs.writeFileSync(
+    destination,
+    JSON.stringify(data, null, 2)
+  );
+}
+
+// Calls the same API handlers used by the application.
+async function call(endpoint) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let statusCode = 200;
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    const res = {
+      code: 200,
+
+      writeHead(code) {
+        statusCode = code;
+        this.code = code;
+      },
+
+      end(body) {
+        let parsed;
+
+        try {
+          if (Buffer.isBuffer(body)) {
+            body = body.toString("utf8");
+          }
+
+          parsed =
+            typeof body === "string"
+              ? JSON.parse(body)
+              : body;
+
+          if (!parsed || typeof parsed !== "object") {
+            throw new Error("Invalid API response");
+          }
+        } catch (error) {
+          parsed = {
+            ok: false,
+            error: `Invalid JSON response: ${error.message}`
+          };
+        }
+
+        finish({
+          code: this.code || statusCode,
+          body: parsed
+        });
+      }
+    };
+
+    try {
+      Promise.resolve(
+        api.handle(
+          { method: "GET" },
+          res,
+          new URL(`http://localhost${endpoint}`)
+        )
+      ).catch((error) => {
+        finish({
+          code: 500,
+          body: {
+            ok: false,
+            error: error.message || "API request failed"
+          }
+        });
+      });
+    } catch (error) {
+      finish({
+        code: 500,
+        body: {
+          ok: false,
+          error: error.message || "API request failed"
+        }
+      });
+    }
   });
 }
-const man = rd("manifest.json") || { datasets: {} };
-man.generatedAt = now; man.mode = MODE;
-// Never overwrite a good file with an error: on failure keep the previous snapshot and record the error.
-async function grab(name, p, file) {
-  const ds = man.datasets[name] = man.datasets[name] || {};
-  ds.lastAttempt = now;
-  const r = await call(p);
-  if (r.body.ok) { wr(file, r.body); ds.updatedAt = r.body.meta.fetchedAt; ds.status = r.body.meta.status; delete ds.error; return r.body; }
-  ds.error = r.body.error || `HTTP ${r.code}`; return null;
-}
-(async () => {
-  let okScores = 0;
-  for (const k of SCORE) if (await grab(`scoreboard/${k}`, `/api/${k}/scoreboard`, `scoreboard/${k}.json`)) okScores++;
-  if (!okScores) { console.error("All scoreboard requests failed; not publishing."); process.exit(1); }
-  if (MODE === "full") {
-    for (const k of STANDINGS) await grab(`standings/${k}`, `/api/${k}/standings`, `standings/${k}.json`);
-    const tracked = readJ(TRACKED) || { players: [] }, idx = {};
-    for (const t of tracked.players || []) {
-      const L = t.sport; if (!PLAYER_SPORTS.includes(L)) { man.datasets[`players/${L}/${t.name}`] = { error: "sport has no player data source" }; continue; }
-      let id = t.id && String(t.id), meta = { name: t.name, team: "", pos: "" };
-      const prev = (rd(`players/${L}/index.json`)?.data?.players || []).find(p => norm(p.name) === norm(t.name));
-      if (!id) {
-        const s = await call(`/api/${L}/players?q=${encodeURIComponent(t.name)}`);
-        const list = s.body.ok ? s.body.data.players : [];
-        const pick = list.find(p => norm(p.name) === norm(t.name)) || (list.length === 1 ? list[0] : null);
-        if (pick) { id = pick.id; meta = pick; }
-        else if (prev) { id = prev.id; meta = prev; }   // transient search failure: keep known id
-        else { man.datasets[`players/${L}/${t.name}`] = { lastAttempt: now, error: s.body.ok ? (list.length ? `ambiguous (${list.length} matches); add "id" to config` : "no match found") : s.body.error }; continue; }
-      } else if (prev) meta = prev;
-      await grab(`players/${L}/${id}`, `/api/${L}/players/${id}/gamelog`, `players/${L}/${id}.json`);
-      if (fs.existsSync(path.join(OUT, `players/${L}/${id}.json`))) (idx[L] = idx[L] || new Map()).set(id, { id, name: meta.name, team: meta.team || "", pos: meta.pos || "" });
-    }
-    for (const L of PLAYER_SPORTS) wr(`players/${L}/index.json`, { ok: true, data: { players: [...(idx[L]?.values() || [])] }, meta: { provider: "collector", status: "historical", fetchedAt: now, note: "Only players listed in config/tracked.json are collected" } });
+
+// Preserve previous successful snapshots when a request fails.
+const manifest = readOutput("manifest.json") || {
+  datasets: {}
+};
+
+manifest.datasets ||= {};
+manifest.generatedAt = now;
+manifest.mode = MODE;
+
+async function grab(name, endpoint, file) {
+  const dataset =
+    manifest.datasets[name] ||
+    (manifest.datasets[name] = {});
+
+  dataset.lastAttempt = now;
+
+  const result = await call(endpoint);
+  const body = result.body;
+
+  if (body && body.ok) {
+    writeJSON(file, body);
+
+    dataset.updatedAt =
+      body.meta?.fetchedAt || now;
+
+    dataset.status =
+      body.meta?.status || "success";
+
+    delete dataset.error;
+
+    return body;
   }
-  wr("manifest.json", man);
-  const errs = Object.entries(man.datasets).filter(([, d]) => d.error);
-  console.log(`mode=${MODE} scoreboards ok=${okScores}/${SCORE.length} datasets=${Object.keys(man.datasets).length} errors=${errs.length}`);
-  errs.slice(0, 15).forEach(([n, d]) => console.log("  !", n, "-", d.error));
-})();
+
+  dataset.error =
+    body?.error || `HTTP ${result.code}`;
+
+  console.error(
+    `Failed: ${name} — ${dataset.error}`
+  );
+
+  return null;
+}
+
+async function main() {
+  fs.mkdirSync(OUT, { recursive: true });
+
+  console.log("Starting Murda Analytics collector...");
+  console.log(`Mode: ${MODE}`);
+  console.log(`Output: ${OUT}`);
+  console.log(`Tracked config: ${TRACKED}`);
+
+  // Collect scoreboards.
+  let successfulScoreboards = 0;
+
+  for (const sport of SCORE) {
+    const result = await grab(
+      `scoreboard/${sport}`,
+      `/api/${sport}/scoreboard`,
+      `scoreboard/${sport}.json`
+    );
+
+    if (result) successfulScoreboards++;
+  }
+
+  // Do not publish an entirely failed scoreboard collection.
+  if (successfulScoreboards === 0) {
+    throw new Error(
+      "All scoreboard requests failed. Previous snapshots were preserved."
+    );
+  }
+
+  // Full collection includes standings and tracked players.
+  if (MODE === "full") {
+    console.log("Collecting standings...");
+
+    for (const sport of STANDINGS) {
+      await grab(
+        `standings/${sport}`,
+        `/api/${sport}/standings`,
+        `standings/${sport}.json`
+      );
+    }
+
+    console.log("Collecting tracked players...");
+
+    const tracked = readJSON(TRACKED) || {
+      players: []
+    };
+
+    const indexes = {};
+
+    for (const player of tracked.players || []) {
+      const sport = player.sport;
+      const name = player.name;
+
+      if (!sport || !name) {
+        console.warn("Skipping invalid tracked player:", player);
+        continue;
+      }
+
+      if (!PLAYER_SPORTS.includes(sport)) {
+        manifest.datasets[`players/${sport}/${name}`] = {
+          error: "Sport has no player data source"
+        };
+        continue;
+      }
+
+      let id = player.id
+        ? String(player.id)
+        : null;
+
+      let metadata = {
+        name,
+        team: "",
+        pos: ""
+      };
+
+      const previousIndex =
+        readOutput(`players/${sport}/index.json`);
+
+      const previousPlayer =
+        (previousIndex?.data?.players || []).find(
+          (entry) => norm(entry.name) === norm(name)
+        );
+
+      // Resolve player ID if one was not provided.
+      if (!id) {
+        const search = await call(
+          `/api/${sport}/players?q=${encodeURIComponent(name)}`
+        );
+
+        const players = search.body?.ok
+          ? search.body.data?.players || []
+          : [];
+
+        const match =
+          players.find(
+            (entry) => norm(entry.name) === norm(name)
+          ) ||
+          (players.length === 1 ? players[0] : null);
+
+        if (match) {
+          id = String(match.id);
+          metadata = match;
+        } else if (previousPlayer) {
+          // Keep the previous known ID if search temporarily fails.
+          id = String(previousPlayer.id);
+          metadata = previousPlayer;
+        } else {
+          manifest.datasets[`players/${sport}/${name}`] = {
+            lastAttempt: now,
+            error: search.body?.ok
+              ? players.length
+                ? `Ambiguous player match (${players.length} results). Add an ID to tracked.json.`
+                : "No matching player found."
+              : search.body?.error || "Player search failed."
+          };
+
+          continue;
+        }
+      } else if (previousPlayer) {
+        metadata = previousPlayer;
+      }
+
+      // Collect the player's game log.
+      await grab(
+        `players/${sport}/${id}`,
+        `/api/${sport}/players/${encodeURIComponent(id)}/gamelog`,
+        `players/${sport}/${id}.json`
+      );
+
+      // Only index players with an existing snapshot.
+      if (
+        fs.existsSync(
+          path.join(OUT, `players/${sport}/${id}.json`)
+        )
+      ) {
+        indexes[sport] ||= new Map();
+
+        indexes[sport].set(id, {
+          id,
+          name: metadata.name || name,
+          team: metadata.team || "",
+          pos: metadata.pos || ""
+        });
+      }
+    }
+
+    // Write player indexes.
+    for (const sport of PLAYER_SPORTS) {
+      writeJSON(
+        `players/${sport}/index.json`,
+        {
+          ok: true,
+          data: {
+            players: [
+              ...(indexes[sport]?.values() || [])
+            ]
+          },
+          meta: {
+            provider: "collector",
+            status: "historical",
+            fetchedAt: now,
+            note: "Only players listed in tracked.json are collected."
+          }
+        }
+      );
+    }
+  }
+
+  // Save manifest.
+  writeJSON("manifest.json", manifest);
+
+  const errors = Object.entries(manifest.datasets)
+    .filter(([, dataset]) => dataset.error);
+
+  console.log("\nCollection complete.");
+  console.log(
+    `Mode: ${MODE} | Scoreboards: ${successfulScoreboards}/${SCORE.length} | Datasets: ${Object.keys(manifest.datasets).length} | Errors: ${errors.length}`
+  );
+
+  errors.slice(0, 15).forEach(([name, dataset]) => {
+    console.log(`  ! ${name}: ${dataset.error}`);
+  });
+}
+
+main().catch((error) => {
+  console.error("Collector failed:", error);
+  process.exitCode = 1;
+});
