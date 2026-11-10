@@ -6,7 +6,7 @@ const CACHE_DIR = process.env.CACHE_DIR || path.join(__dirname, ".cache");
 const MIN_GAP = 250, TIMEOUT = 10000;           // per-host spacing (ms) and request timeout
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const enc = encodeURIComponent;
-const cache = new Map(), inflight = new Map(), lastCall = new Map(), health = {};
+const lastHdr = new Map(), cache = new Map(), inflight = new Map(), lastCall = new Map(), health = {};
 const SITE = "https://site.api.espn.com/apis/site/v2/sports/";
 const SITEV2 = "https://site.api.espn.com/apis/v2/sports/";
 const WEB = "https://site.web.api.espn.com/apis/common/v3/sports/";
@@ -42,9 +42,9 @@ async function upstream(url) {
   const target = process.env.MOCK_BASE ? `${process.env.MOCK_BASE}/${h}${u.pathname}${u.search}` : url;
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), TIMEOUT);
   try {
-    const r = await fetch(target, { headers: { "user-agent": "edge-analytics-personal/1.0", accept: "application/json" }, signal: ctl.signal });
+    const r = await fetch(target, { headers: { "user-agent": "murda-analytics-personal/1.0", accept: "application/json" }, signal: ctl.signal });
     if (!r.ok) throw new Error(`upstream ${h} HTTP ${r.status}`);
-    const j = await r.json();
+    const j = await r.json(); lastHdr.set(h, Object.fromEntries(r.headers.entries()));
     health[h] = { ...health[h], lastOk: new Date().toISOString() };
     return j;
   } catch (e) {
@@ -62,6 +62,7 @@ async function cached(key, ttl, load, staleFor = 3600e3) {
     try {
       const data = await load(), at = Date.now();
       cache.set(key, { data, at, exp: at + (typeof ttl === "function" ? ttl(data) : ttl) });
+      if (cache.size > 600) cache.delete(cache.keys().next().value);   // bound memory
       return { data, cache: "miss", at };
     } catch (err) {
       if (e && Date.now() - e.at < staleFor) return { data: e.data, cache: "stale", at: e.at, error: err.message };
@@ -83,12 +84,13 @@ async function serve(res, provider, key, ttl, load, { transform = x => x, status
 }
 
 /* ---------- normalizers ---------- */
+const normOdds = o => o ? { provider: o.provider?.name ?? null, details: o.details ?? null, overUnder: o.overUnder ?? null, spread: o.spread ?? null, scope: "game line (spread / total), not a player prop" } : null;
 function normScore(raw) {
   const side = x => x && { id: x.team?.id ?? x.id ?? null, name: x.team?.displayName ?? x.athlete?.displayName ?? x.displayName ?? null, abbr: x.team?.abbreviation ?? null, logo: x.team?.logo ?? x.team?.logos?.[0]?.href ?? null, score: x.score ?? null, winner: x.winner ?? null };
   return { games: (raw.events || []).map(e => {
     const c = e.competitions?.[0] || {}, cs = c.competitors || [], t = e.status?.type || {};
     return { id: e.id, name: e.shortName || e.name, startTime: e.date, state: t.state === "in" ? "live" : t.state === "post" ? "completed" : "scheduled", detail: t.shortDetail || t.detail || "",
-      home: side(cs.find(x => x.homeAway === "home")), away: side(cs.find(x => x.homeAway === "away")) };
+      home: side(cs.find(x => x.homeAway === "home")), away: side(cs.find(x => x.homeAway === "away")), odds: normOdds(c.odds?.[0]) };
   }) };
 }
 function normSearch(raw, L) {
@@ -106,12 +108,12 @@ function normEspnLog(raw, L) {
       if (typeof v === "string" && /^\d+-\d+$/.test(v) && n.includes("-")) { const [a, b] = n.split("-"), [x, y] = v.split("-"); stats[a] = +x; stats[b] = +y; }
       else { const num = Number(v); stats[n] = v !== "" && Number.isFinite(num) ? num : v; }
     });
-    games.push({ id: String(ev.eventId), date: (m.gameDate || "").slice(0, 10), opponent: m.opponent?.abbreviation || m.opponent?.displayName || "", home: m.atVs === "vs", result: m.gameResult || null, seasonType: st.displayName || null, stats });
+    games.push({ id: String(ev.eventId), startTime: m.gameDate || null, date: m.gameDate ? etDate(m.gameDate) : "", dateOnly: false, opponent: m.opponent?.abbreviation || m.opponent?.displayName || "", opponentId: m.opponent?.id != null ? String(m.opponent.id) : "", opponentName: m.opponent?.displayName || "", home: m.atVs === "vs", result: m.gameResult || null, seasonType: st.displayName || null, stats });
   }
   return finishLog(games, L);
 }
 function finishLog(games, L) {
-  games.sort((a, b) => a.date.localeCompare(b.date));
+  games.sort((a, b) => (a.startTime || a.date).localeCompare(b.startTime || b.date));
   let derived = [];
   if (L.basketball) for (const g of games) {
     const s = g.stats, r = s.totalRebounds ?? s.rebounds, p = s.points, a = s.assists;
@@ -120,6 +122,7 @@ function finishLog(games, L) {
   const keys = new Set(); games.forEach(g => Object.entries(g.stats).forEach(([k, v]) => typeof v === "number" && keys.add(k)));
   return { games, statKeys: [...keys], derived };
 }
+const etDate = iso => { try { return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(iso)); } catch { return ""; } };
 const numStats = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => typeof v === "number"));
 
 /* ---------- native adapters ---------- */
@@ -131,7 +134,7 @@ const mlb = {
     for (const g of q.group ? [q.group] : ["hitting", "pitching"]) {
       const d = await upstream(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=gameLog&group=${g}&season=${season}`);
       const sp = d.stats?.[0]?.splits || [];
-      if (sp.length) return { group: g, ...finishLog(sp.map(x => ({ id: String(x.game?.gamePk ?? x.date), date: x.date, opponent: x.opponent?.name || "", home: !!x.isHome, result: null, seasonType: null,
+      if (sp.length) return { group: g, ...finishLog(sp.map(x => ({ id: String(x.game?.gamePk ?? x.date), startTime: null, date: x.date, dateOnly: true, opponent: x.opponent?.name || "", opponentId: x.opponent?.id != null ? String(x.opponent.id) : "", opponentName: x.opponent?.name || "", home: !!x.isHome, result: null, seasonType: null,
         stats: { ...numStats(x.stat), ...(x.stat.inningsPitched != null ? { innings: (([a, b]) => +a + (+b || 0) / 3)(String(x.stat.inningsPitched).split(".")) } : {}) } })), L) };
     }
     return { group: null, ...finishLog([], L) };
@@ -141,11 +144,11 @@ const nhl = {
     return { players: d.map(p => ({ id: String(p.playerId), name: p.name, team: p.teamAbbrev || "", pos: p.positionCode || "" })) }; },
   async log(id, q, L) { const d = await upstream(`https://api-web.nhle.com/v1/player/${id}/game-log/${q.season ? q.season + "/2" : "now"}`);
     return finishLog((d.gameLog || []).map(x => { const s = numStats(x); if (s.shotsAgainst != null && s.goalsAgainst != null) s.saves = s.shotsAgainst - s.goalsAgainst;
-      return { id: String(x.gameId), date: x.gameDate, opponent: x.opponentAbbrev, home: x.homeRoadFlag === "H", result: null, seasonType: null, stats: s }; }), L); } };
+      return { id: String(x.gameId), startTime: null, date: x.gameDate, dateOnly: true, opponent: x.opponentAbbrev, opponentId: x.opponentAbbrev || "", opponentName: x.opponentAbbrev || "", home: x.homeRoadFlag === "H", result: null, seasonType: null, stats: s }; }), L); } };
 
 function loadLog(key, L, id, q) {
-  const k = `gl:${key}:${id}:${q.season || ""}:${q.group || ""}`;
-  const load = L.players === "mlb" ? () => mlb.log(id, q, L) : L.players === "nhl" ? () => nhl.log(id, q, L)
+  const k = `gl:${key}:${id}:${q.season || ""}:${q.group || ""}:${q.opponentId || ""}:${q.limit || ""}`;
+  const load = L.soccer ? () => soccerLog(id, q, L) : L.players === "mlb" ? () => mlb.log(id, q, L) : L.players === "nhl" ? () => nhl.log(id, q, L)
     : async () => normEspnLog(await upstream(`${WEB}${L.espn}/athletes/${enc(id)}/gamelog${q.season ? "?season=" + enc(q.season) : ""}`), L);
   return { k, load };
 }
@@ -194,7 +197,7 @@ async function listTeams(L) {
   return out;
 }
 async function loadRoster(key, L, t) {
-  const mk = o => ({ sport: key, team: t.name, teamId: t.id, league: t.league, ...o });
+  const mk = o => ({ sport: key, team: t.name, teamId: t.id, league: t.league, path: t.path, ...o });
   if (L.dir === "mlb") { const d = await upstream(`https://statsapi.mlb.com/api/v1/teams/${t.id}/roster?rosterType=active`);
     return (d.roster || []).map(r => mk({ id: String(r.person.id), name: r.person.fullName, pos: r.position?.abbreviation || "", jersey: r.jerseyNumber || "",
       photo: `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_120,q_auto:best/v1/people/${r.person.id}/headshot/67/current` })); }
@@ -287,14 +290,208 @@ function buildPlayers(raw, home, away, type) {
   }
   return { available: teams.some(t => t.groups.some(g => g.rows.length)), teams, note: "Players the provider lists with no stats yet (or who did not play) show blank values." };
 }
+function periodInfo(L) {
+  const e = L.espn || "";
+  if (e.includes("mens-college-basketball")) return { reg: 2, unit: "H" };
+  if (e.startsWith("basketball") || e.startsWith("football")) return { reg: 4, unit: "Q" };
+  if (e.startsWith("hockey")) return { reg: 3, unit: "P" };
+  if (e.startsWith("soccer")) return { reg: 2, unit: "H" };
+  if (e.startsWith("baseball")) return { reg: 9, unit: "" };
+  return { reg: 0, unit: "" };
+}
+function buildPeriods(hc, home, away, L) {
+  const ls = t => (hc.competitors || []).find(c => String(c.team?.id) === String(t?.id))?.linescores || [];
+  const h = ls(home), a = ls(away), n = Math.max(h.length, a.length);
+  if (!n) return { available: false, note: "The provider did not include period scores for this game." };
+  const { reg, unit } = periodInfo(L), v = x => { const n = Number(x?.displayValue ?? x?.value); return Number.isFinite(n) ? n : null; };
+  const labels = Array.from({ length: n }, (_, i) => i < reg || !reg ? `${i + 1}${unit}` : `OT${i - reg + 1 > 1 ? i - reg + 1 : ""}`);
+  return { available: true, labels, home: Array.from({ length: n }, (_, i) => v(h[i])), away: Array.from({ length: n }, (_, i) => v(a[i])), final: { home: home?.score ?? null, away: away?.score ?? null } };
+}
+// Player points per quarter, computed from play-by-play scoring plays (shooter = first participant). Verified against box score points.
+function buildQuarterPoints(raw, L, playersBlock) {
+  if (!L.basketball) return { available: false, note: "Quarter-level player stats are only computed for basketball." };
+  const plays = raw.plays || [];
+  if (!plays.length) return { available: false, note: "The provider did not include play-by-play for this game, so player quarter points cannot be computed." };
+  const by = {};
+  for (const p of plays) {
+    const per = p.period?.number, a = p.participants?.[0]?.athlete, pts = Number(p.scoreValue);
+    if (!p.scoringPlay || !pts || !per || !a?.id) continue;
+    const o = by[a.id] = by[a.id] || {}; o[per] = (o[per] || 0) + pts;
+  }
+  let checked = 0, bad = 0;
+  for (const t of playersBlock.teams) for (const g of t.groups) {
+    const col = g.columns.find(c => c.label === "PTS"); if (!col) continue;
+    for (const r of g.rows) { const box = Number(r.stats[col.key]); if (!Number.isFinite(box)) continue; const tot = Object.values(by[r.id] || {}).reduce((x, y) => x + y, 0); checked++; if (tot !== box) bad++; else r.qpts = by[r.id] || {}; }
+  }
+  const verified = checked > 0 && bad === 0;
+  if (!verified) for (const t of playersBlock.teams) for (const g of t.groups) for (const r of g.rows) delete r.qpts;
+  return { available: Object.keys(by).length > 0 && verified, verified, checked, mismatches: bad, source: "computed from play-by-play scoring plays", note: verified ? "Computed from play-by-play and matched to every player's box-score points." : `Not shown: play-by-play totals did not match the box score for ${bad} of ${checked} players, so they cannot be trusted.` };
+}
 function normGame(raw, id, L) {
   const hc = raw.header?.competitions?.[0] || {}, st = hc.status?.type || raw.header?.status?.type || {}, type = (L.espn || "").split("/")[0];
   const comp = (hc.competitors || []).map(c => ({ id: c.team?.id ?? null, name: c.team?.displayName || c.team?.name || "", abbr: c.team?.abbreviation || "", logo: c.team?.logos?.[0]?.href || c.team?.logo || null, score: c.score ?? null, homeAway: c.homeAway, winner: c.winner ?? null }));
   const home = comp.find(c => c.homeAway === "home") || comp[1] || null, away = comp.find(c => c.homeAway === "away") || comp[0] || null;
-  return { id, league: raw.header?.league?.name || L.name, date: hc.date || null, sportType: type,
+  const players = buildPlayers(raw, home, away, type);
+  return { id, league: raw.header?.league?.name || L.name, startTime: hc.date || null, date: hc.date || null, sportType: type,
     status: { state: st.state === "in" ? "live" : st.state === "post" ? "completed" : "scheduled", detail: st.detail || st.shortDetail || "", clock: hc.status?.displayClock ?? null, period: hc.status?.period ?? null },
-    home, away, teamStats: buildTeamStats(raw, home, away, type), players: buildPlayers(raw, home, away, type) };
+    home, away, odds: normOdds(raw.pickcenter?.[0] || raw.odds?.[0]), periods: buildPeriods(hc, home, away, L), teamStats: buildTeamStats(raw, home, away, type), players, quarterPoints: buildQuarterPoints(raw, L, players) };
 }
+
+/* ---------- schedules, soccer game logs (from match box scores), H2H, quarter trends ---------- */
+const getSummary = (pp, id, done) => cached(`sum:${pp}:${id}`, done ? 30 * 864e5 : 20e3, () => upstream(`${SITE}${pp}/summary?event=${enc(id)}`));
+async function teamSchedule(pp, teamId, season) {
+  const r = await cached(`sched:${pp}:${teamId}:${season || ""}`, 216e5, () => upstream(`${SITE}${pp}/teams/${teamId}/schedule${season ? `?season=${enc(season)}` : ""}`));
+  const sc = x => { const v = x?.score; return v == null ? null : Number(typeof v === "object" ? v.value ?? v.displayValue : v); };
+  return (r.data.events || []).map(e => {
+    const c = e.competitions?.[0] || {}, st = c.status?.type || e.status?.type || {}, cs = c.competitors || [], me = cs.find(x => String(x.team?.id) === String(teamId)), op = cs.find(x => x !== me);
+    return { id: String(e.id), startTime: e.date || c.date || null, completed: !!st.completed || st.state === "post", home: me?.homeAway === "home",
+      opponent: { id: op?.team?.id != null ? String(op.team.id) : "", abbr: op?.team?.abbreviation || "", name: op?.team?.displayName || "" }, score: { me: sc(me), opp: sc(op) } };
+  }).filter(e => e.id).sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""));
+}
+async function soccerLog(id, q, L) {
+  const st = ensureDir("soccer", L); let e = st.players.get(id); const t0 = Date.now();
+  while (!e && !st.complete && Date.now() - t0 < 8000) { await sleep(250); e = st.players.get(id); }
+  if (!e) throw new Error("Player is not in the soccer directory (still loading, not on a current roster of the 7 covered leagues, or unknown id)");
+  const pp = e.path || "soccer/" + (SOCCER_DIR.find(([, n]) => n === e.league) || [])[0];
+  let ev = (await teamSchedule(pp, e.teamId, q.season)).filter(x => x.completed);
+  if (q.opponentId) ev = ev.filter(x => x.opponent.id === String(q.opponentId));
+  ev = ev.slice(-Math.min(+q.limit || 15, 40));
+  const games = []; let failed = 0;
+  for (const x of ev) {
+    try {
+      const raw = (await getSummary(pp, x.id, true)).data; let row = null;
+      for (const r of raw.rosters || []) for (const pl of r.roster || []) if (String(pl.athlete?.id) === String(id)) row = pl;
+      const stats = {}; for (const s of row?.stats || []) { const v = Number(s.displayValue ?? s.value); if (s.name && Number.isFinite(v)) stats[s.name] = v; }
+      games.push({ id: x.id, startTime: x.startTime, date: x.startTime ? etDate(x.startTime) : "", dateOnly: false, opponent: x.opponent.abbr || x.opponent.name, opponentId: x.opponent.id, opponentName: x.opponent.name, home: x.home,
+        result: x.score.me == null ? null : x.score.me > x.score.opp ? "W" : x.score.me < x.score.opp ? "L" : "D", seasonType: e.league, competition: e.league, dnp: !row, starter: row ? !!row.starter : null, stats });
+    } catch { failed++; }
+  }
+  return { ...finishLog(games, L), team: e.team, league: e.league, failedMatches: failed, matchesConsidered: ev.length,
+    note: `Built from ESPN match box scores of ${e.team}'s completed ${e.league} matches (last ${ev.length} from ESPN's team schedule). Matches where the player was not in the squad are marked did-not-play. Minutes appear only if ESPN includes them.` };
+}
+function seasonsFor(key, n) {
+  const d = new Date(), y = d.getFullYear(), m = d.getMonth() + 1; let base;
+  if (key === "nba" || key === "ncaab") base = m >= 9 ? y + 1 : y;          // ESPN names these by ending year
+  else if (key === "nhl") base = m >= 9 ? y : y - 1;                          // start year; API wants e.g. 20252026
+  else if (key === "soccer") base = m >= 7 ? y : y - 1;
+  else if (key === "nfl" || key === "ncaaf") base = m >= 3 ? y : y - 1;
+  else base = m >= 2 ? y : y - 1;                                             // mlb, wnba
+  return Array.from({ length: n }, (_, i) => key === "nhl" ? `${base - i}${base - i + 1}` : String(base - i));
+}
+async function h2h(key, L, id, q, opp) {
+  const seasons = seasonsFor(key, Math.min(+q.seasons || 3, 6)), all = [], failed = [];
+  for (const sn of seasons) {
+    try { const lq = { season: sn, ...(L.soccer ? { opponentId: opp.id, limit: 40 } : {}) }, { k, load } = loadLog(key, L, id, lq);
+      all.push(...(await cached(k, 3e5, load)).data.games.map(g => ({ ...g, season: sn }))); }
+    catch (e) { failed.push({ season: sn, error: e.message }); }
+  }
+  const inRange = g => (!q.from || g.date >= q.from) && (!q.to || g.date <= q.to);
+  const isOpp = g => (g.opponentId && String(g.opponentId) === String(opp.id)) || (g.opponentName && fold(g.opponentName) === fold(opp.name)) || (g.opponent && fold(g.opponent) === fold(opp.abbr));
+  const played = all.filter(g => !g.dnp && inRange(g)), games = played.filter(isOpp);
+  const keys = new Set(); games.forEach(g => Object.entries(g.stats).forEach(([k, v]) => typeof v === "number" && keys.add(k)));
+  const avgOf = (gs, k) => avg(gs.map(g => g.stats[k]).filter(Number.isFinite));
+  const mk = gs => Object.fromEntries([...keys].map(k => [k, avgOf(gs, k)]));
+  const recent = games.slice(-3);
+  return { opponent: opp, seasonsChecked: seasons, failedSeasons: failed, games, statKeys: [...keys], count: games.length, averages: mk(games), recent3: mk(recent),
+    baseline: L.soccer ? null : mk(played), baselineGames: L.soccer ? null : played.length,
+    note: `Dates are US Eastern calendar dates. ${L.soccer ? "Soccer H2H only covers meetings in the player's current league schedule." : "Baseline = the player's average over all games in the seasons checked."}` };
+}
+async function teamQuarters(key, L, t, q) {
+  const sched = (await teamSchedule(t.path || L.espn, t.id, q.season)).filter(e => e.completed).slice(-Math.min(+q.games || 10, 20)), rows = [];
+  for (const e of sched) {
+    try { const g = normGame((await getSummary(t.path || L.espn, e.id, true)).data, e.id, L); if (!g.periods.available) continue;
+      const me = String(g.home?.id) === String(t.id) ? "home" : "away", other = me === "home" ? "away" : "home";
+      rows.push({ id: e.id, startTime: e.startTime, opponent: e.opponent.abbr || e.opponent.name, home: e.home, labels: g.periods.labels, scored: g.periods[me], allowed: g.periods[other] }); } catch {}
+  }
+  const { reg } = periodInfo(L), quarters = [];
+  for (let i = 0; i < reg; i++) { const sc = rows.map(r => r.scored[i]).filter(Number.isFinite), al = rows.map(r => r.allowed[i]).filter(Number.isFinite);
+    quarters.push({ label: rows[0]?.labels[i] || `${i + 1}`, scored: avg(sc), allowed: avg(al), games: sc.length }); }
+  const half = (a, b, k) => { const v = rows.map(r => r[k][a] + r[k][b]).filter(Number.isFinite); return v.length ? avg(v) : null; };   // from raw per-game sums, not rounded averages
+  return { team: t, games: rows.length, quarters, firstHalf: reg >= 2 ? { scored: half(0, 1, "scored"), allowed: half(0, 1, "allowed") } : null, secondHalf: reg === 4 ? { scored: half(2, 3, "scored"), allowed: half(2, 3, "allowed") } : null, rows,
+    note: "Averages use regulation periods only (overtime excluded). Built from each game's period scores." };
+}
+
+/* ---------- usage tracking, sportsbook lines (The Odds API, free key required), picks ---------- */
+const jf = n => path.join(CACHE_DIR, n);
+const readJ = (n, d) => { try { return JSON.parse(fs.readFileSync(jf(n), "utf8")); } catch { return d; } };
+const writeJ = (n, o) => { try { fs.mkdirSync(CACHE_DIR, { recursive: true }); fs.writeFileSync(jf(n), JSON.stringify(o)); } catch {} };
+const ODDS = {
+  nba: { sport: "basketball_nba", markets: { player_points: ["points", "Points"], player_rebounds: ["totalRebounds", "Rebounds"], player_assists: ["assists", "Assists"], player_threes: ["threePointFieldGoalsMade", "3-Pointers"], player_blocks: ["blocks", "Blocks"], player_steals: ["steals", "Steals"], player_points_rebounds_assists: ["PRA", "Pts+Reb+Ast"] } },
+  nhl: { sport: "icehockey_nhl", markets: { player_points: ["points", "Points"], player_assists: ["assists", "Assists"], player_shots_on_goal: ["shots", "Shots on Goal"], player_goals: ["goals", "Goals"] } },
+  mlb: { sport: "baseball_mlb", markets: { batter_hits: ["hits", "Hits"], batter_home_runs: ["homeRuns", "Home Runs"], batter_total_bases: ["totalBases", "Total Bases"], pitcher_strikeouts: ["strikeOuts", "Strikeouts"] } },
+};
+const oddsKey = () => process.env.ODDS_API_KEY || "", BUDGET = () => +process.env.ODDS_MONTHLY_BUDGET || 400, MAXEV = () => +process.env.ODDS_MAX_EVENTS || 2;
+async function oddsGet(pq, cost) {
+  const u = readJ("odds-usage.json", {}), mo = new Date().toISOString().slice(0, 7), used = u.month === mo ? u.used || 0 : 0;
+  if (cost && used + cost > BUDGET()) throw new Error(`Monthly odds credit budget reached (${used}/${BUDGET()} credits). Nothing was fetched.`);
+  const j = await upstream(`https://api.the-odds-api.com/v4${pq}${pq.includes("?") ? "&" : "?"}apiKey=${enc(oddsKey())}`);
+  const h = lastHdr.get("api.the-odds-api.com") || {}, spent = cost ? (h["x-requests-last"] != null ? Number(h["x-requests-last"]) : cost) : 0;
+  writeJ("odds-usage.json", { month: mo, used: used + spent, remaining: h["x-requests-remaining"] != null ? Number(h["x-requests-remaining"]) : null, budget: BUDGET(), updatedAt: new Date().toISOString() });
+  return j;
+}
+async function refreshProps(key, force) {
+  const C = ODDS[key], store = readJ(`props-${key}.json`, { events: {} }), now = Date.now();
+  const ev = await oddsGet(`/sports/${C.sport}/events?dateFormat=iso`, 0);          // listing events is free
+  const soon = ev.filter(e => { const t = Date.parse(e.commence_time); return t > now && t < now + 36 * 36e5; }).sort((a, b) => Date.parse(a.commence_time) - Date.parse(b.commence_time)).slice(0, MAXEV());
+  for (const e of soon) {
+    const have = store.events[e.id]; if (have && !force && now - have.fetchedAt < 216e5) continue;   // at most every 6h per event
+    const d = await oddsGet(`/sports/${C.sport}/events/${e.id}/odds?regions=us&markets=${Object.keys(C.markets).join(",")}&oddsFormat=american&dateFormat=iso`, Object.keys(C.markets).length);
+    store.events[e.id] = { id: e.id, home: e.home_team, away: e.away_team, commence: e.commence_time, fetchedAt: now, bookmakers: d.bookmakers || [] };
+  }
+  for (const id of Object.keys(store.events)) if (Date.parse(store.events[id].commence) < now - 6 * 36e5) delete store.events[id];
+  store.fetchedAt = now; writeJ(`props-${key}.json`, store); return store;
+}
+const trackUsage = (key, id, name, stat) => { const u = readJ("usage.json", { players: {}, stats: {} });
+  if (id) { const k = `${key}:${id}`, o = u.players[k] || { n: 0, name }; o.n++; o.name = name || o.name; o.t = Date.now(); u.players[k] = o; }
+  if (stat) { const k = `${key}:${stat}`; u.stats[k] = { n: (u.stats[k]?.n || 0) + 1 }; }
+  writeJ("usage.json", u); return u; };
+async function buildPicks(key, L, opts) {
+  const C = ODDS[key];
+  if (!C) return { configured: false, supported: false, picks: [], message: "Sportsbook player-prop lines are only wired for NBA, NHL and MLB." };
+  if (!oddsKey()) return { configured: false, supported: true, picks: [], message: "Line unavailable: no odds key is configured. Add a free key from the-odds-api.com as ODDS_API_KEY (see README) to load real sportsbook lines." };
+  let store = readJ(`props-${key}.json`, null), error = null;
+  const age = store ? Date.now() - store.fetchedAt : Infinity;
+  try { if ((opts.refresh && age > 18e5) || age > 864e5) store = await refreshProps(key, !!opts.refresh); } catch (e) { error = e.message; }
+  if (!store || !Object.keys(store.events).length) return { configured: true, supported: true, picks: [], error, message: error || "No upcoming games with prop lines were found in the next 36 hours." };
+  const st = ensureDir(key, L), t0 = Date.now(); while (!st.complete && Date.now() - t0 < 20000) await sleep(250);
+  const byName = new Map(); for (const pl of st.players.values()) { const f = fold(pl.name); (byName.get(f) || byName.set(f, []).get(f)).push(pl); }
+  const hist = readJ("lines.json", {}), usage = readJ("usage.json", { players: {}, stats: {} }), picks = []; let unmatched = 0; const sample = [], formCache = new Map();
+  for (const ev of Object.values(store.events)) {
+    const groups = new Map();
+    for (const b of ev.bookmakers) for (const m of b.markets || []) { if (!C.markets[m.key]) continue;
+      for (const o of m.outcomes || []) { if (!o.description || o.point == null) continue; const gk = `${m.key}|${o.description}`; const g = groups.get(gk) || groups.set(gk, { market: m.key, player: o.description, books: new Map() }).get(gk);
+        const bk = g.books.get(b.key) || g.books.set(b.key, { book: b.title || b.key, line: o.point, over: null, under: null, updatedAt: m.last_update || b.last_update || null }).get(b.key);
+        if (/^over$/i.test(o.name)) bk.over = o.price; else if (/^under$/i.test(o.name)) bk.under = o.price; bk.line = o.point; } }
+    for (const g of groups.values()) {
+      const cands = (byName.get(fold(g.player)) || []).filter(c => [ev.home, ev.away].some(t => fold(t) === fold(c.team)));
+      if (cands.length !== 1) { unmatched++; if (sample.length < 5) sample.push(g.player); continue; }   // never guess between players or teams
+      const pl = cands[0], books = [...g.books.values()], counts = {}; books.forEach(b => counts[b.line] = (counts[b.line] || 0) + 1);
+      const line = Number(Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0] - b[0])[0][0]), [statKey, mlabel] = C.markets[g.market];
+      const hk = `${ev.id}|${g.market}|${pl.id}`, h = hist[hk] = hist[hk] || []; if (!h.length || h[h.length - 1].line !== line) h.push({ t: Date.now(), line });
+      picks.push({ key, market: g.market, marketLabel: mlabel, statKey, line, lineMove: h.length > 1 ? +(line - h[0].line).toFixed(2) : null, movedSince: h.length > 1 ? new Date(h[0].t).toISOString() : null,
+        player: { id: pl.id, name: pl.name, team: pl.team, photo: pl.photo || null, pos: pl.pos }, opponent: fold(ev.home) === fold(pl.team) ? ev.away : ev.home, game: { id: ev.id, startTime: ev.commence, home: ev.home, away: ev.away },
+        books, over: books.filter(b => b.over != null).sort((a, b) => b.over - a.over)[0] || null, under: books.filter(b => b.under != null).sort((a, b) => b.under - a.under)[0] || null,
+        popularity: (usage.players[`${key}:${pl.id}`]?.n || 0) + 0.5 * (usage.stats[`${key}:${statKey}`]?.n || 0), form: null, linesFetchedAt: new Date(ev.fetchedAt).toISOString() });
+    }
+  }
+  writeJ("lines.json", hist);
+  const ids = [...new Set(picks.map(p => p.player.id))].slice(0, 40);
+  for (const id of ids) { try { const { k, load } = loadLog(key, L, id, {}); formCache.set(id, (await cached(k, 3e5, load)).data.games.filter(g => !g.dnp)); } catch {} }
+  for (const p of picks) {
+    const gs = formCache.get(p.player.id); if (!gs) continue;
+    const v = gs.map(g => g.stats[p.statKey]).filter(Number.isFinite); if (v.length < 3) continue;
+    const l10 = v.slice(-10), l5 = v.slice(-5), over = l10.filter(x => x > p.line).length, sa = avg(v), a5 = avg(l5);
+    p.form = { games: v.length, last10: { n: l10.length, over, under: l10.filter(x => x < p.line).length, hitRateOver: +(over / l10.length).toFixed(3) }, last5Avg: a5, last10Avg: avg(l10), seasonAvg: sa, trendPct: sa ? +((a5 - sa) / sa * 100).toFixed(1) : null, recent: l10 };
+    const why = []; if (v.length >= 8 && p.form.trendPct != null && Math.abs(p.form.trendPct) >= 15) why.push(`Last 5 avg ${a5} vs season ${sa} (${p.form.trendPct > 0 ? "+" : ""}${p.form.trendPct}%)`);
+    if (l10.length >= 8 && (p.form.last10.hitRateOver >= 0.8 || p.form.last10.hitRateOver <= 0.2)) why.push(`${over}/${l10.length} games over ${p.line}`);
+    if (p.lineMove != null && Math.abs(p.lineMove) >= 1) why.push(`Line moved ${p.lineMove > 0 ? "+" : ""}${p.lineMove} since first seen by this server`);
+    p.trendReasons = why;
+  }
+  const u = readJ("odds-usage.json", {});
+  return { configured: true, supported: true, picks, error, meta: { fetchedAt: new Date(store.fetchedAt).toISOString(), events: Object.keys(store.events).length, unmatchedProps: unmatched, unmatchedSample: sample, creditsUsedThisMonth: u.used ?? null, creditBudget: BUDGET(), creditsRemainingReported: u.remaining ?? null,
+    note: "Lines are from The Odds API (US books), cached up to 6h per game. Line movement only covers changes this server has seen." } };
+}
+exports.usage = () => readJ("usage.json", { players: {}, stats: {} });
 
 /* ---------- router ---------- */
 exports.cache = cache; exports.health = health;
@@ -305,6 +502,10 @@ exports.handle = async (req, res, u) => {
     ...Object.entries(LEAGUES).map(([k, L]) => ({ key: k, name: L.name, scoreboard: !!L.espn, teams: !!L.espn, standings: !!L.espn || L.native === "f1", directory: !!L.dir, players: !!L.players, playerProvider: L.players || null, notes: L.note || L.why || null })),
     ...Object.entries(UNSUPPORTED).map(([k, why]) => ({ key: k, name: k, supported: false, notes: why }))] });
   if (p[0] === "health") return send(res, 200, { ok: true, data: { hosts: health, cacheEntries: cache.size } });
+  if (p[0] === "usage") { if (p[1] === "track") trackUsage(q.sport, q.id, q.name, q.stat); return send(res, 200, { ok: true, data: readJ("usage.json", { players: {}, stats: {} }) }); }
+  if (p[0] === "picks") { const k = q.sport || "nba", PL = LEAGUES[k];
+    if (!PL) return send(res, 404, { ok: false, error: "Unknown sport" });
+    try { return send(res, 200, { ok: true, data: await buildPicks(k, PL, { refresh: q.refresh === "1" }), meta: { provider: "the-odds-api", status: "lines" } }); } catch (e) { return send(res, 502, { ok: false, error: e.message, meta: { status: "unavailable" } }); } }
   const L = LEAGUES[p[0]];
   if (!L) return send(res, 404, { ok: false, error: `Unknown sport '${p[0]}'`, meta: { status: "unavailable" } });
   const unsup = why => send(res, 501, { ok: false, error: why, meta: { status: "unavailable" } });
@@ -324,6 +525,12 @@ exports.handle = async (req, res, u) => {
         if (!t) return send(res, 404, { ok: false, error: "Unknown team id", meta: { status: "unavailable" } });
         return serve(res, L.dir, `roster:${p[0]}:${t.path || ""}:${t.id}`, 36e5, async () => ({ team: t, players: await loadRoster(p[0], L, t) }), { status: () => "roster" });
       } catch (e) { return send(res, 502, { ok: false, error: e.message, meta: { status: "unavailable" } }); }
+    }
+    if (p[2] && p[3] === "quarters") {
+      if (!L.basketball) return unsup("Quarter trends are implemented for basketball only");
+      try { const t = (await getTeams(p[0], L)).data.teams.find(x => x.id === p[2]); if (!t) return send(res, 404, { ok: false, error: "Unknown team id", meta: { status: "unavailable" } });
+        return serve(res, "espn", `qt:${p[0]}:${t.id}:${q.games || ""}:${q.season || ""}`, 6e5, () => teamQuarters(p[0], L, t, q), { status: () => "historical" }); }
+      catch (e) { return send(res, 502, { ok: false, error: e.message, meta: { status: "unavailable" } }); }
     }
     const fq = fold(q.q || "");
     return serve(res, L.dir, `teams:${p[0]}`, 864e5, async () => ({ teams: await listTeams(L) }), { transform: d => ({ teams: fq ? d.teams.filter(t => fold(t.name + " " + t.abbr).includes(fq)) : d.teams }), status: () => "roster" });
@@ -352,12 +559,17 @@ exports.handle = async (req, res, u) => {
       const { _f, ...rest } = e; return send(res, 200, { ok: true, data: { ...rest, gamelogAvailable: !L.soccer }, meta: dmeta({ complete: st.complete }) });
     }
     if (sub === "gamelog" || sub === "stats") {
-      if (L.soccer) return unsup("No verified free source for soccer player season stats or game logs. Per-match player stats appear in game box scores.");
       const { k, load } = loadLog(p[0], L, id, q);
       return serve(res, prov, k, 3e5, load, { transform: sub === "stats" ? computeAverages : x => x, status: () => "historical",
         note: sub === "stats" ? "Averages computed from the retrieved game log, not a provider-published figure" : "Completed games only; in-progress game stats are not guaranteed" });
     }
-    return unsup("Use /players?q=, /players/{id}, /players/{id}/gamelog or /players/{id}/stats");
+    if (sub === "h2h") {
+      if (!q.opponent) return send(res, 400, { ok: false, error: "Provide ?opponent=<team id> (from /teams)" });
+      let opp; try { opp = (await getTeams(p[0], L)).data.teams.find(t => t.id === String(q.opponent) && (!q.path || t.path === q.path)); } catch (e) { return send(res, 502, { ok: false, error: e.message, meta: { status: "unavailable" } }); }
+      if (!opp) return send(res, 404, { ok: false, error: "Unknown opponent team id", meta: { status: "unavailable" } });
+      return serve(res, prov, `h2h:${p[0]}:${id}:${opp.id}:${q.seasons || ""}:${q.from || ""}:${q.to || ""}`, 3e5, () => h2h(p[0], L, id, q, opp), { status: () => "historical" });
+    }
+    return unsup("Use /players?q=, /players/{id}, /players/{id}/gamelog, /stats or /h2h");
   }
   if (what === "games" && p[2]) {
     if (!L.espn) return unsup("No game detail for this sport");

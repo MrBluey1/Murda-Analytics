@@ -1,9 +1,0 @@
-{
-  "_help": "Players whose game logs are collected hourly. Use sport keys: nba, wnba, nfl, ncaaf, ncaab, mlb, nhl. Name is searched; if ambiguous add an \"id\" (from /api/{sport}/players?q=name).",
-  "players": [
-    { "sport": "nba", "name": "LeBron James" },
-    { "sport": "mlb", "name": "Aaron Judge" },
-    { "sport": "nhl", "name": "Connor McDavid" },
-    { "sport": "nfl", "name": "Patrick Mahomes" }
-  ]
-}

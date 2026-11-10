@@ -5,7 +5,7 @@ const fs = require("fs"), path = require("path"), api = require("../api");
 const OUT = process.env.OUT || "data-out", MODE = process.env.MODE || "fast";
 const TRACKED = process.env.TRACKED || path.join(__dirname, "../config/tracked.json");
 const SCORE = ["nba", "wnba", "nfl", "ncaaf", "ncaab", "mlb", "nhl", "epl", "laliga", "mls", "ucl"];
-const STANDINGS = [...SCORE, "f1"], PLAYER_SPORTS = ["nba", "wnba", "nfl", "ncaaf", "ncaab", "mlb", "nhl", "soccer"], DIR_SPORTS = ["nba", "wnba", "nfl", "mlb", "nhl", "soccer"];   // NCAA directories need hundreds of requests: skipped
+const STANDINGS = [...SCORE, "f1"], PLAYER_SPORTS = ["nba", "wnba", "nfl", "ncaaf", "ncaab", "mlb", "nhl"];
 const now = new Date().toISOString(), norm = s => String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 const readJ = f => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; } };
 const rd = f => readJ(path.join(OUT, f));
@@ -48,16 +48,7 @@ async function grab(name, p, file) {
       await grab(`players/${L}/${id}`, `/api/${L}/players/${id}/gamelog`, `players/${L}/${id}.json`);
       if (fs.existsSync(path.join(OUT, `players/${L}/${id}.json`))) (idx[L] = idx[L] || new Map()).set(id, { id, name: meta.name, team: meta.team || "", pos: meta.pos || "" });
     }
-    for (const L of PLAYER_SPORTS) {
-      const prevIdx = rd(`players/${L}/index.json`);
-      let base = new Map((prevIdx?.data?.players || []).map(p => [p.id, p])), directoryAt = prevIdx?.meta?.directoryAt || null;
-      if (DIR_SPORTS.includes(L) && !(Date.now() - Date.parse(directoryAt || 0) < 20 * 36e5)) {   // rebuild roster directory about once a day
-        try { const d = await api.directory(L); if (d.length) { base = new Map(d.map(p => [p.id, p])); directoryAt = now; } else throw new Error("empty directory"); }
-        catch (e) { man.datasets[`directory/${L}`] = { lastAttempt: now, error: e.message }; }
-      }
-      for (const [id, m] of idx[L] || []) base.set(id, { ...base.get(id), ...m });
-      wr(`players/${L}/index.json`, { ok: true, data: { players: [...base.values()] }, meta: { provider: "collector", status: "roster", fetchedAt: now, directoryAt, note: "Roster directory for search; game logs only for players in config/tracked.json" } });
-    }
+    for (const L of PLAYER_SPORTS) wr(`players/${L}/index.json`, { ok: true, data: { players: [...(idx[L]?.values() || [])] }, meta: { provider: "collector", status: "historical", fetchedAt: now, note: "Only players listed in config/tracked.json are collected" } });
   }
   wr("manifest.json", man);
   const errs = Object.entries(man.datasets).filter(([, d]) => d.error);

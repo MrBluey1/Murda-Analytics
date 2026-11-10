@@ -1,4 +1,4 @@
-# GitHub snapshot setup (free)
+# Murda Analytics: GitHub snapshot setup (free)
 
 What this does: GitHub Actions runs `scripts/collect.js` on a schedule, saves JSON snapshots, and publishes them with GitHub Pages. Your website reads them when the local server (`node server.js`) is not running. The local server stays the primary, live source.
 
@@ -13,7 +13,7 @@ What this does: GitHub Actions runs `scripts/collect.js` on a schedule, saves JS
    git remote add origin https://github.com/USER/REPO.git
    git push -u origin main
    ```
-   `.gitignore` keeps `edge-analytics.html` out of the repo. Only the data pipeline is uploaded.
+   `.gitignore` keeps `murda-analytics.html` out of the repo. Only the data pipeline is uploaded.
 4. Repo → Settings → Pages → Build and deployment → Source: **GitHub Actions**.
 5. Repo → Settings → Actions → General → Workflow permissions → **Read and write permissions** → Save.
 6. Repo → Actions tab → `collect-sports-data` → Run workflow → mode `full` → Run.

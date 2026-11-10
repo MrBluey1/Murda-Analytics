@@ -1,4 +1,4 @@
-# Validation checklist (what was actually verified)
+# Murda Analytics: validation checklist (what was actually verified)
 
 "Mock" = tested against fake provider responses I wrote from community documentation (test/*.js, test/ui.py in real Chromium).
 "Real" = tested against the live provider. **No real provider was reachable from my environment, so every Real column is NOT VERIFIED.**
@@ -12,7 +12,7 @@ Run it yourself: first start `node server.js`, then try the "Live check" steps a
 | MLB | mock OK (statsapi roster) | mock | mock | via ESPN scoreboard | generic | generic | mock logic only | not verified |
 | NHL | mock OK (api-web roster) | mock | mock | via ESPN scoreboard | generic | generic | mock logic only | not verified |
 | NCAA Football / Basketball | same code, NOT run: needs hundreds of requests to build | - | - | same path | generic | generic | **unverified, may not exist** | not verified |
-| Soccer (EPL, La Liga, Bundesliga, Serie A, Ligue 1, MLS, Saudi Pro League) | mock OK (7 league directory) | mock OK | mock OK | mock OK | mock OK | mock OK (starters/subs) | **not available (no free verified source)** | not verified |
+| Soccer (EPL, La Liga, Bundesliga, Serie A, Ligue 1, MLS, Saudi Pro League) | mock OK (7 league directory) | mock OK | mock OK | mock OK | mock OK | mock OK (starters/subs) | mock OK: match history from box scores (goals, assists, shots, SOT); minutes only if ESPN sends them | not verified |
 | Champions League | scoreboard + box score only (no player directory) | - | - | same path | same path | same path | - | not verified |
 | Formula 1 | - | - | - | - | - | - | standings only (Jolpica) | not verified |
 | Tennis, Golf, Cricket | **not supported** | | | | | | | |
@@ -28,3 +28,7 @@ Run it yourself: first start `node server.js`, then try the "Live check" steps a
 3. http://localhost:8787/api/nba/scoreboard -> note a game id, then http://localhost:8787/api/nba/games/<id>
 4. http://localhost:8787/api/health  -> shows which provider hosts succeeded or failed.
 Paste me anything that errors or looks wrong.
+
+## Added in the latest version (all mock-tested, none verified against real providers)
+- H2H (NBA, soccer), quarter scoring (team + verified player points), picks (needs ODDS_API_KEY), time-zone fix.
+- The Odds API response format and market names are from memory/docs and unverified. Player props are wired for NBA, NHL and MLB only.
