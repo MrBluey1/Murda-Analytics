@@ -76,7 +76,8 @@ jobs:
 
       - name: Build Pages artifact
         run: |
-          mkdir site
+          mkdir -p site
+          cp murda-analytics.html site/index.html
           rsync -a --exclude=.git out/ site/
 
       - name: Upload Pages artifact
