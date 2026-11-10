@@ -110,12 +110,38 @@ const P={
    return{stats,games:(d.gameLog||[]).slice().reverse().map(x=>({date:x.gameDate,opp:x.opponentAbbrev,home:x.homeRoadFlag==="H",raw:x}))}}}
 };
 
-const STATIC_BASE=(()=>{try{const q=new URLSearchParams(location.search).get("data");if(q)localStorage.setItem("dataBase",q);return(q||localStorage.getItem("dataBase")||"").replace(/\/$/,"")}catch{return""}})();
-const staticUrl=u=>{let m;
- if(m=u.match(/^\/api\/(\w+)\/scoreboard/))return`${STATIC_BASE}/scoreboard/${m[1]}.json`;
- if(m=u.match(/^\/api\/(\w+)\/players\?/))return`${STATIC_BASE}/players/${m[1]}/index.json`;
- if(m=u.match(/^\/api\/(\w+)\/players\/([^/]+)\/gamelog/))return`${STATIC_BASE}/players/${m[1]}/${m[2]}.json`;
- return null};
+
+const STATIC_BASE = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get("data");
+
+    if (q) localStorage.setItem("dataBase", q);
+
+    return (
+      q ||
+      localStorage.getItem("dataBase") ||
+      "https://mrbluey1.github.io/Murda-Analytics"
+    ).replace(/\/+$/, "");
+  } catch {
+    return "https://mrbluey1.github.io/Murda-Analytics";
+  }
+})();
+
+const staticUrl = u => {
+  let m;
+
+  if (m = u.match(/^\/api\/(\w+)\/scoreboard/))
+    return `${STATIC_BASE}/scoreboard/${m[1]}.json`;
+
+  if (m = u.match(/^\/api\/(\w+)\/players\?/))
+    return `${STATIC_BASE}/players/${m[1]}/index.json`;
+
+  if (m = u.match(/^\/api\/(\w+)\/players\/([^/]+)\/gamelog/))
+    return `${STATIC_BASE}/players/${m[1]}/${m[2]}.json`;
+
+  return null;
+};
+
 /* Data access: live local API first; falls back to GitHub Pages snapshots when the local server is unavailable. */
 const A=async u=>{let err;
  if(PROXY){try{const r=await fetch(u),d=await r.json().catch(()=>({}));if(d.ok)return d;err=new Error(d.error||"API error "+r.status)}catch(e){err=e}}
