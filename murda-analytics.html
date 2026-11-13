@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Murda Analytics</title>
-<meta name="description" content="Murda Analytics: multi-sport player research, game box scores, head-to-head history and sportsbook lines.">
+<meta name="description" content="Murda Analytics: multi-sport player research, game box scores, head-to-head history, career statistics and locally calculated model estimates.">
 <meta name="theme-color" content="#0a0a0c"><meta property="og:title" content="Murda Analytics">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a0a0c'/%3E%3Cpath d='M6 24V8l10 10L26 8v16' fill='none' stroke='%233ddc97' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
@@ -70,9 +70,9 @@ details summary{cursor:pointer;color:var(--m)}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.path{stroke-dashoffset:0}.dot{opacity:1}}
 </style></head><body>
 <header><div class="logo" aria-label="Murda Analytics"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#131318" stroke="#26262f"/><path d="M7 23V9l9 9 9-9v14" fill="none" stroke="#3ddc97" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg><span>MURDA <b>ANALYTICS</b></span></div>
-<nav id="nav"><button data-v="live" class="on">Live Games</button><button data-v="research">Player Research</button><button data-v="fav">Favorites</button><button data-v="src">Data Sources</button></nav></header>
+<nav id="nav"><button data-v="live" class="on">Live Games</button><button data-v="research">Player Research</button><button data-v="fav">Favorites</button><button data-v="src">Sources</button></nav></header>
 <main id="app"></main>
-<footer><b>MURDA ANALYTICS</b> · Data comes from unofficial public sources and can be delayed or incomplete. Times are shown in your time zone (<span id="tzn"></span>). Not betting advice.</footer>
+<footer><b>MURDA ANALYTICS</b> · Statistics come from free public sources and can be delayed or incomplete; model estimates are not guarantees. Times are shown in your time zone (<span id="tzn"></span>). See Sources for licenses.</footer>
 <script>
 const $=(s,e=document)=>e.querySelector(s);
 const PROXY=location.protocol.startsWith("http")&&["localhost","127.0.0.1"].includes(location.hostname);
@@ -153,16 +153,23 @@ const A=async u=>{let err;
  if(!r.ok||!d.ok)throw new Error(d.error||"snapshot error "+r.status);
  if(/players\?/.test(u)){const q=decodeURIComponent(u.split("q=")[1]||"").toLowerCase();d.data={players:d.data.players.filter(p=>fold(p.name).includes(fold(q)))}}
  return{...d,static:true,fallback:!!PROXY}};
-const pretty=k=>k.replace(/([a-z])([A-Z])/g,"$1 $2").replace(/^./,c=>c.toUpperCase());
+const pretty=k=>String(k).replace(/_/g," ").replace(/([a-z])([A-Z])/g,"$1 $2").replace(/\b[a-z]/g,c=>c.toUpperCase());
 const fold=s=>String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[đĐ]/g,"d").toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim();
-const viaApi=(k,label)=>({label,src:"ESPN/MLB/NHL public APIs via local API, or GitHub Actions snapshot (unofficial)",
+const FALLBACK=["nba","wnba","nfl","mlb","nhl","soccer"].map(k=>({key:k,label:k.toUpperCase(),implementation:"unknown",leagues:[],caps:{search:1,gamelog:1,h2h:1},providers:[]}));
+const viaApi=(k,label)=>({label,src:"the provider listed on the Sources page (local API or GitHub snapshot)",
  async search(q){const d=await A(`/api/${k}/players?q=${encodeURIComponent(q)}`),a=d.data.players;a.dir=d.meta?.directory;return a},
  async teams(q){return (await A(`/api/${k}/teams?q=${encodeURIComponent(q)}`)).data.teams},
  async roster(t){return (await A(`/api/${k}/teams/${encodeURIComponent(t.id)}/roster${t.path?"?path="+encodeURIComponent(t.path):""}`)).data.players},
- async logs(p){  const d=(await A(`/api/${k}/players/${p.id}/gamelog`)).data,stats={};
-  d.statKeys.forEach(key=>stats[pretty(key)]=x=>x[key]);
-  return{stats,note:d.note,games:d.games.map(g=>({date:g.date,startTime:g.startTime,dateOnly:g.dateOnly,opp:g.opponent,home:g.home,raw:g.stats,dnp:g.dnp,result:g.result}))}}});
-Object.assign(P,{mlb:viaApi("mlb","MLB"),nhl:viaApi("nhl","NHL"),nba:viaApi("nba","NBA"),wnba:viaApi("wnba","WNBA"),nfl:viaApi("nfl","NFL"),soccer:viaApi("soccer","Soccer"),ncaab:viaApi("ncaab","NCAA Basketball"),ncaaf:viaApi("ncaaf","NCAA Football")});
+ async logs(p,season){const d=(await A(`/api/${k}/players/${encodeURIComponent(p.id)}/gamelog${season?"?season="+encodeURIComponent(season):""}`)).data,stats={},keys={};
+  d.statKeys.forEach(key=>{stats[pretty(key)]=x=>x[key];keys[pretty(key)]=key});
+  return{stats,keys,note:d.note,linked:d.linked||null,games:d.games.map(g=>({date:g.date,startTime:g.startTime,dateOnly:g.dateOnly,label:g.label,opp:g.opponent,home:g.home,raw:g.stats,dnp:g.dnp,result:g.result}))}}});
+let REG=null;
+const regReady=(async()=>{try{if(PROXY)REG=(await(await fetch("/api/registry")).json()).data}catch{}if(!REG)REG={sports:FALLBACK,providers:[]};REG.sports.forEach(s=>{P[s.key]=viaApi(s.key,s.label)})})();
+const sportMeta=k=>(REG&&REG.sports.find(s=>s.key===k))||{key:k,label:k,caps:{},leagues:[]};
+const IMPL={full:"",partial:" (partial)",dataset:" (needs dataset)","info-only":" (profile only)"};
+function seasonOpts(k){const d=new Date(),y=d.getFullYear(),m=d.getMonth()+1;let base;
+ if(k==="nba"||k==="ncaab")base=m>=9?y+1:y;else if(k==="nhl")base=m>=9?y:y-1;else if(k==="nfl"||k==="ncaaf")base=m>=3?y:y-1;else if(k==="f1")base=m>=3?y:y-1;else if(k==="tennis")base=y;else base=m>=2?y:y-1;
+ return Array.from({length:6},(_,i)=>k==="nhl"?{v:`${base-i}${base-i+1}`,l:`${base-i}-${base-i+1}`}:{v:String(base-i),l:k==="nba"||k==="ncaab"?`${base-i-1}-${String(base-i).slice(2)}`:String(base-i)})}
 const KEY={NBA:"nba",WNBA:"wnba",NFL:"nfl",MLB:"mlb",NHL:"nhl",NCAAF:"ncaaf",NCAAB:"ncaab","Premier League":"epl","La Liga":"laliga",Bundesliga:"bundesliga","Serie A":"seriea","Ligue 1":"ligue1","Saudi Pro League":"saudi",MLS:"mls","Champions League":"ucl"};
 
 /* ---------- LIVE SCORES (ESPN public endpoints, unofficial) ---------- */
@@ -180,7 +187,7 @@ async function live(){
   let delay=60e3;
   try{const r=await A(`/api/${KEY[lg]}/scoreboard`),gs=r.data.games;
    $("#gm").innerHTML=gs.length?gs.map((g,i)=>{const row=t=>`<div class="row"><span>${t?.logo?`<img class="logo-s" src="${esc(t.logo)}" alt="" loading="lazy" onerror="this.style.display='none'">`:""}${esc(t?.name)}</span><b>${g.state==="scheduled"?"":esc(t?.score)}</b></div>`;
-    return`<div class="card game" data-id="${esc(g.id)}" tabindex="0" role="button" aria-label="Open game details" ${first?`style="animation:in .4s ${i*40}ms backwards"`:'style="animation:none"'}>${g.state==="live"?'<span class="live">● LIVE</span>':""}${row(g.away)}${row(g.home)}<span class="m">${esc(g.state==="scheduled"&&g.startTime?fmtDT(g.startTime):g.detail)}</span>${g.odds&&(g.odds.details||g.odds.overUnder!=null)?`<span class="m">Line: ${esc(g.odds.details||"")}${g.odds.overUnder!=null?" · O/U "+esc(g.odds.overUnder):""}${g.odds.provider?" ("+esc(g.odds.provider)+")":""}</span>`:""}</div>`}).join(""):'<div class="card m">No games scheduled in this league right now.</div>';
+    return`<div class="card game" data-id="${esc(g.id)}" tabindex="0" role="button" aria-label="Open game details" ${first?`style="animation:in .4s ${i*40}ms backwards"`:'style="animation:none"'}>${g.state==="live"?'<span class="live">● LIVE</span>':""}${row(g.away)}${row(g.home)}<span class="m">${esc(g.state==="scheduled"&&g.startTime?fmtDT(g.startTime):g.detail)}</span></div>`}).join(""):'<div class="card m">No games scheduled in this league right now.</div>';
    const age=Date.now()-Date.parse(r.meta.fetchedAt);
    $("#ts").textContent=r.static?`Source: ESPN scoreboard snapshot collected by GitHub Actions at ${new Date(r.meta.fetchedAt).toLocaleString()}${r.fallback?" (local API unavailable, using fallback)":""}. Snapshots refresh about every 15 min and can lag; this is not real-time. Status when collected: ${r.meta.status}.${age>36e5?" WARNING: this snapshot is over 1 hour old.":""}`:`Source: ESPN public scoreboard via local API (unofficial). Status: ${r.meta.status}. Fetched ${new Date(r.meta.fetchedAt).toLocaleTimeString()} (${r.meta.cache}).${r.meta.stale?" STALE: provider failed, showing last good data.":""}${r.meta.status==="live"?" Auto-refreshing every 20s.":""}`;
    if(r.static)delay=300e3;else if(r.meta.status==="live")delay=20e3;first=false;
@@ -201,9 +208,8 @@ async function game(key,id){
  const head=()=>{const st=G.status,badge=st.state==="live"?'<span class="live">● LIVE</span>':st.state==="completed"?'<span class="m">FINAL</span>':'<span class="m">UPCOMING</span>';
   const tm=t=>`<div class="team">${logo(t)}<b>${esc(t.name)}</b><div class="big">${st.state==="scheduled"?"–":esc(t.score)}</div></div>`;
   const per=G.periods,pt=per&&per.available?`<div class="scroll"><table class="st" style="margin:14px auto 0;max-width:420px"><thead><tr><th>Period</th><th>${esc(G.away.abbr||G.away.name)}</th><th>${esc(G.home.abbr||G.home.name)}</th></tr></thead><tbody>${per.labels.map((l,i)=>`<tr><td>${esc(l)}</td><td>${val(per.away[i])}</td><td>${val(per.home[i])}</td></tr>`).join("")}<tr><td><b>Final</b></td><td><b>${val(per.final.away)}</b></td><td><b>${val(per.final.home)}</b></td></tr></tbody></table></div>`:"";
-  const od=G.odds&&(G.odds.details||G.odds.overUnder!=null)?`<div class="m" style="text-align:center;margin-top:10px">Game line: ${esc(G.odds.details||"")}${G.odds.overUnder!=null?" · O/U "+esc(G.odds.overUnder):""}${G.odds.provider?" ("+esc(G.odds.provider)+")":""}. This is the team spread/total, not a player prop.</div>`:"";
   const when=G.startTime?new Date(G.startTime).toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"numeric",minute:"2-digit",timeZoneName:"short"}):"";
-  $("#gh").innerHTML=`<div class="card"><div class="m" style="text-align:center;margin-bottom:10px">${esc(G.league)}${when?" · "+esc(when):""}</div><div class="gh">${tm(G.away)}<div>${badge}<div class="m">${esc(st.detail)}${st.clock&&st.state==="live"&&!String(st.detail).includes(st.clock)?" · "+esc(st.clock):""}</div></div>${tm(G.home)}</div>${pt}${od}</div>`};
+  $("#gh").innerHTML=`<div class="card"><div class="m" style="text-align:center;margin-bottom:10px">${esc(G.league)}${when?" · "+esc(when):""}</div><div class="gh">${tm(G.away)}<div>${badge}<div class="m">${esc(st.detail)}${st.clock&&st.state==="live"&&!String(st.detail).includes(st.clock)?" · "+esc(st.clock):""}</div></div>${tm(G.home)}</div>${pt}</div>`};
 
  let QT=null,QTE="";
  const isBB=()=>G.sportType==="basketball";
@@ -241,145 +247,207 @@ async function game(key,id){
 }
 
 /* ---------- PLAYER RESEARCH ---------- */
-const EXTRA={tennis:["Tennis",[["Sofascore","https://www.sofascore.com/search?q="]]]};
-const PK={sport:"nba",tab:"trending",cache:{},list:[],forms:[]};
-const S={tab:"ov",hs:3,sport:"all",ps:"mlb",player:null,data:null,stat:null,thr:null,n:10,err:null,loading:false};
-function research(){
+const PK={sport:"mlb",tab:"leaders",league:"",cache:{},forms:[]};
+const S={tab:"ov",hs:3,sport:"all",league:"",season:"",ps:"mlb",player:null,data:null,profile:null,profErr:null,cmp:null,stat:null,thr:null,n:10,err:null,loading:false,keys:{}};
+async function research(){
+ await regReady;
+ const sp=S.sport==="all"?null:sportMeta(S.sport),leagues=sp?sp.leagues||[]:[];
+ const note=!sp?"Search runs across every sport at once: current rosters (NBA, WNBA, NFL, MLB, NHL, soccer), F1 drivers, tennis players, any imported datasets and profile-only sports. NCAA is searched when you pick it.":`${esc(sp.note||"")}${sp.implementation==="dataset"?" Import the dataset first (see README).":""}`;
  $("#app").innerHTML=`<div class="view"><div class="card"><div class="bar">
- <select id="sp"><option value="all" ${S.sport==="all"?"selected":""}>All sports</option>${Object.entries(P).map(([k,v])=>`<option value="${k}" ${k===S.sport?"selected":""}>${v.label}</option>`).join("")}${Object.entries(EXTRA).map(([k,v])=>`<option value="${k}" ${k===S.sport?"selected":""}>${v[0]} (links only)</option>`).join("")}</select>
- <input id="q" placeholder="Search any player (e.g. Aaron Judge, Connor McDavid)" style="flex:1;min-width:200px" aria-label="Search player"></div>
- <div id="hits"></div><p class="m" style="margin:8px 0 0">${EXTRA[S.sport]?`${EXTRA[S.sport][0]} player stats are not built into this app yet. Search opens outside sites.`:S.sport==="all"?"All sports searches MLB, NHL, NBA, WNBA, NFL and Soccer (current rosters). Pick NCAA from the list to search it. Tennis is links only.":""}</p></div><div id="out"></div></div>`;
- $("#sp").onchange=e=>{S.sport=e.target.value;S.player=null;S.data=null;research()};
+ <select id="sp" aria-label="Sport"><option value="all">All sports</option>${REG.sports.map(x=>`<option value="${x.key}" ${x.key===S.sport?"selected":""}>${esc(x.label)}${esc(IMPL[x.implementation]||"")}</option>`).join("")}</select>
+ ${leagues.length?`<select id="lgsel" aria-label="League"><option value="">All leagues</option>${leagues.map(l=>`<option ${l===S.league?"selected":""}>${esc(l)}</option>`).join("")}</select>`:""}
+ <input id="q" placeholder="Search any athlete (e.g. Lionel Messi, Patrick Mahomes, Max Verstappen)" style="flex:1;min-width:200px" aria-label="Search athlete"></div>
+ <div id="hits"></div><p class="m" style="margin:8px 0 0">${note}</p></div><div id="out"></div></div>`;
+ $("#sp").onchange=e=>{S.sport=e.target.value;S.league="";S.player=null;S.data=null;research()};
+ if($("#lgsel"))$("#lgsel").onchange=e=>{S.league=e.target.value};
  let t,tok=0;$("#q").oninput=e=>{clearTimeout(t);const q=e.target.value.trim();if(q.length<2){tok++;$("#hits").innerHTML="";return}
   t=setTimeout(async()=>{const my=++tok;
-  if(EXTRA[S.sport]){$("#hits").onclick=null;$("#hits").innerHTML=`<div class="res">${EXTRA[S.sport][1].map(([l,u])=>`<a class="chip" target="_blank" rel="noopener" href="${u}${encodeURIComponent(q)}">Search "${esc(q)}" on ${l} ↗</a>`).join("")}</div>`;return}
   $("#hits").innerHTML='<p class="m"><span class="spin"></span>Searching…</p>';
   try{const [r,tm]=await Promise.all([searchAll(q),searchTeams(q)]);if(my!==tok)return;
-   const img=(u,r)=>u?`<img class="ph" ${r?'style="border-radius:8px;object-fit:contain"':""} src="${esc(u)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`:'<span class="ph"></span>';
-   $("#hits").innerHTML=r.map((p,i)=>`<div class="hit" tabindex="0" data-i="${i}"><span class="l">${img(p.photo)}<span><b>${esc(p.name)}</b><br><span class="m">${esc(p.pos)}${p.pos&&p.team?" · ":""}${esc(p.team)}</span></span></span><span class="m" style="text-align:right">${esc(p.league||P[p.sport].label)}${p.league&&p.league!==P[p.sport].label?`<br>${esc(P[p.sport].label)}`:""}</span></div>`).join("")
+   const img=(u,rd)=>u?`<img class="ph" ${rd?'style="border-radius:8px;object-fit:contain"':""} src="${esc(u)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`:'<span class="ph"></span>';
+   const bad=(r.providers||[]).filter(x=>!x.ok).map(x=>sportMeta(x.key).label);
+   $("#hits").innerHTML=r.map((p,i)=>{const sm=sportMeta(p.sport);return`<div class="hit" tabindex="0" data-i="${i}"><span class="l">${img(p.photo)}<span><b>${esc(p.name)}</b>${p.info?' <span class="tag">profile only</span>':""}<br><span class="m">${esc(p.pos||"")}${p.pos&&p.team?" · ":""}${esc(p.team||"")}</span></span></span><span class="m" style="text-align:right">${esc(p.league||sm.label)}${p.league&&p.league!==sm.label?`<br>${esc(sm.label)}`:""}</span></div>`}).join("")
     +(tm.length?`<p class="m" style="margin:10px 0 2px">Teams</p>`+tm.map((x,i)=>`<div class="hit" tabindex="0" data-t="${i}"><span class="l">${img(x.logo,1)}<b>${esc(x.name)}</b></span><span class="m">${esc(x.league)}</span></div>`).join(""):"")
-    +(!r.length&&!tm.length?`<p class="m">No current players or teams match "${esc(q)}". Check the spelling or choose a specific sport. Only players on current rosters are listed.</p>`:"")
-    +(r.incomplete?'<p class="m"><span class="spin"></span>The player directory is still loading, so results may be incomplete. Search again in a few seconds.</p>':"");
+    +(!r.length&&!tm.length?`<p class="m">No athlete or team matches "${esc(q)}". Check the spelling or pick a specific sport. Rosters list current players only; tennis and F1 include historical athletes.</p>`:"")
+    +(r.loading&&r.loading.length?`<p class="m"><span class="spin"></span>Still building the player directory for ${esc(r.loading.map(k=>sportMeta(k).label).join(", "))}. Search again in a few seconds for complete results.</p>`:"")
+    +(bad.length?`<p class="m">Some sources were unavailable and are not included: ${esc(bad.join(", "))}.</p>`:"");
    $("#hits").onclick=$("#hits").onkeydown=ev=>{if(ev.type==="keydown"&&ev.key!=="Enter")return;const h=ev.target.closest(".hit");if(!h)return;if(h.dataset.i!=null)pick(r[h.dataset.i]);else if(h.dataset.t!=null)showRoster(tm[h.dataset.t])}
   }catch(x){if(my===tok)$("#hits").innerHTML=`<div class="err">Search failed: ${esc(x.message)}</div>`}},250)};
  render();
 }
-const searchKeys=()=>S.sport==="all"?Object.keys(P).filter(k=>!/^ncaa/.test(k)):[S.sport];
+const TEAM_SPORTS=["nba","wnba","nfl","mlb","nhl","soccer","ncaab","ncaaf"];
+const searchKeys=()=>S.sport==="all"?Object.keys(P).filter(k=>!/^ncaa/.test(k)&&TEAM_SPORTS.includes(k)):[S.sport];
 async function searchAll(q){
- const rs=await Promise.allSettled(searchKeys().map(k=>P[k].search(q).then(r=>{const a=r.map(p=>({...p,sport:k}));a.inc=!!(r.dir&&!r.dir.complete);return a})));
- const ok=rs.filter(r=>r.status==="fulfilled").flatMap(r=>r.value),fq=fold(q);
- ok.sort((a,b)=>(fold(b.name)===fq)-(fold(a.name)===fq));
- ok.incomplete=rs.some(r=>r.status==="fulfilled"&&r.value.inc);
- if(!ok.length&&rs.every(r=>r.status==="rejected"))throw rs[0].reason;return ok}
+ if(PROXY){const qs=new URLSearchParams({q});if(S.sport!=="all")qs.set("sport",S.sport);if(S.league)qs.set("league",S.league);
+  const d=await A(`/api/search?${qs}`),a=d.data.players;a.providers=d.meta.providers;a.loading=d.meta.directoriesLoading;return a}
+ const rs=await Promise.allSettled(searchKeys().map(k=>P[k].search(q).then(r=>r.map(p=>({...p,sport:k})))));
+ const ok=rs.filter(r=>r.status==="fulfilled").flatMap(r=>r.value);if(!ok.length&&rs.every(r=>r.status==="rejected"))throw rs[0].reason;return ok}
 async function searchTeams(q){
- const rs=await Promise.allSettled(searchKeys().map(k=>P[k].teams(q).then(r=>r.slice(0,4).map(t=>({...t,sport:k})))));
+ const ks=searchKeys().filter(k=>TEAM_SPORTS.includes(k));if(!PROXY)return[];
+ const rs=await Promise.allSettled(ks.map(k=>P[k].teams(q).then(r=>r.slice(0,4).map(t=>({...t,sport:k})))));
  return rs.filter(r=>r.status==="fulfilled").flatMap(r=>r.value).slice(0,8)}
 async function showRoster(t){const o=$("#out");$("#hits").innerHTML="";o.innerHTML='<div class="sk"></div>';
  try{const pl=await P[t.sport].roster(t);
   o.innerHTML=`<div class="card view"><div class="bar"><h2 style="margin:0;flex:1">${t.logo?`<img class="logo-s" style="width:32px;height:32px" src="${esc(t.logo)}" alt="" onerror="this.style.display='none'">`:""}${esc(t.name)} <span class="m" style="font-size:14px">${esc(t.league)} · ${pl.length} players</span></h2></div><div id="rost">${pl.map((p,i)=>`<div class="hit" tabindex="0" data-i="${i}"><span class="l">${p.photo?`<img class="ph" src="${esc(p.photo)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`:'<span class="ph"></span>'}<b>${esc(p.name)}</b></span><span class="m">${esc(p.pos)}${p.jersey!==""&&p.jersey!=null?" · #"+esc(p.jersey):""}</span></div>`).join("")||'<p class="m">The provider returned no roster for this team.</p>'}</div></div>`;
   $("#rost").onclick=$("#rost").onkeydown=ev=>{if(ev.type==="keydown"&&ev.key!=="Enter")return;const h=ev.target.closest(".hit");if(h)pick({...pl[h.dataset.i],sport:t.sport})}
  }catch(x){o.innerHTML=`<div class="err">Roster failed: ${esc(x.message)}</div>`}}
-async function pick(p){S.ps=p.sport||S.sport;S.player=p;S.tab="ov";S.opp=null;S.h2h=null;S.loading=true;S.err=null;S.data=null;S.loadMsg=S.ps==="soccer"?"Building match history from match box scores. This can take several seconds the first time.":"";track({...p,sport:S.ps});$("#hits").innerHTML="";render();
- try{const d=await P[S.ps].logs(p);d.games=d.games.filter(g=>g.date||g.startTime);S.data=d;S.stat=Object.keys(d.stats)[0];S.thr=null;
-  if(S.preset){const lb=pretty(S.preset.key);if(d.stats[lb]){S.stat=lb;S.thr=S.preset.thr}S.preset=null}
-  if(!d.games.length)S.err=`No ${SEASON} game log returned for ${p.name}. The provider returned zero games, which usually means the player had no major-league games this season. Search results also include minor leaguers and retired players. Try another match or season.`}catch(x){S.err="Game log failed: "+x.message}
+async function pick(p){S.ps=p.sport||S.sport;S.player=p;S.tab="ov";S.opp=null;S.h2h=null;S.profile=null;S.profErr=null;S.cmp=null;S.season="";track({...p,sport:S.ps});await loadLog(p)}
+async function loadLog(p){S.loading=true;S.err=null;S.data=null;S.loadMsg=S.ps==="soccer"||S.ps==="nfl"?"Loading game history. Soccer builds it from match box scores, which can take several seconds the first time.":"";if($("#hits"))$("#hits").innerHTML="";render();
+ try{const d=await P[S.ps].logs(p,S.season);d.games=d.games.filter(g=>g.date||g.startTime||g.label);S.data=d;S.keys=d.keys||{};S.stat=Object.keys(d.stats)[0];S.thr=null;
+  if(!d.games.length)S.err=`No game or match history was returned for ${p.name}${S.season?" in the selected season":" this season"}. Try another season, or open the Profile tab.`}
+ catch(x){S.err="Game log failed: "+x.message}
+ if(S.err&&!(S.data&&S.data.games.length))S.tab="profile";
  S.loading=false;render()}
 const mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0;
+function headerHTML(){const p=S.player,fav=store.get("fav",[]).some(x=>x.sport===S.ps&&String(x.id)===String(p.id)),sp=sportMeta(S.ps);
+ return`<div class="bar">${p.photo?`<img class="ph" style="width:48px;height:48px" src="${esc(p.photo)}" alt="" onerror="this.style.visibility='hidden'">`:""}<h2 style="margin:0;flex:1">${esc(p.name)} <span class="m" style="font-size:14px">${esc(p.pos||"")} ${esc(p.team||"")} ${p.league?"· "+esc(p.league):""} · ${esc(sp.label)}</span></h2><button class="chip" id="fv">${fav?"★ Saved":"☆ Save"}</button>${[["FotMob","https://www.fotmob.com/search?q="],["Sofascore","https://www.sofascore.com/search?q="],["StatMuse","https://www.statmuse.com/ask?q="],...(S.ps==="nba"?[["RealGM","https://basketball.realgm.com/search?q="]]:[])].map(([l,u])=>`<a class="chip" target="_blank" rel="noopener" href="${u}${encodeURIComponent(p.name||"")}">${l} ↗</a>`).join("")}</div>`}
+function tabsHTML(){const c=sportMeta(S.ps).caps||{},hasLog=!!(S.data&&S.data.games.length);
+ const t=[["ov","Overview",hasLog],["profile","Profile & career",true],["h2h","H2H",!!c.h2h&&hasLog],["cmp","Compare",hasLog]].filter(x=>x[2]);
+ return`<div class="tabs" id="ptabs" role="tablist">${t.map(([k,l])=>`<button class="tab ${S.tab===k?"on":""}" data-pt="${k}" role="tab">${l}</button>`).join("")}<span class="ink" id="pink"></span></div>`}
 function render(){const o=$("#out");if(!o)return;
  if(S.loading){o.innerHTML=`<div class="sk"></div>${S.loadMsg?`<p class="m"><span class="spin"></span>${esc(S.loadMsg)}</p>`:""}`;return}
- if(S.err){const pl=S.player||{};o.innerHTML=`<div class="card"><div class="bar">${pl.photo?`<img class="ph" style="width:48px;height:48px" src="${esc(pl.photo)}" alt="" onerror="this.style.visibility='hidden'">`:""}<h2 style="margin:0;flex:1">${esc(pl.name||"")} <span class="m" style="font-size:14px">${esc(pl.pos||"")} ${esc(pl.team||"")} ${pl.league?"· "+esc(pl.league):""}</span></h2>${[["FotMob","https://www.fotmob.com/search?q="],["Sofascore","https://www.sofascore.com/search?q="],["StatMuse","https://www.statmuse.com/ask?q="]].map(([l,u])=>`<a class="chip" target="_blank" rel="noopener" href="${u}${encodeURIComponent(pl.name||"")}">${l} ↗</a>`).join("")}</div><div class="err">${esc(S.err)}</div></div>`;return}
- if(!S.data){picksPanel();return}
- const d=S.data,f=d.stats[S.stat];
+ if(!S.player){insightsPanel();return}
+ o.innerHTML=`<div class="card">${headerHTML()}${tabsHTML()}<div id="pbody"></div></div>`;
+ $("#fv").onclick=()=>{let f=store.get("fav",[]);const i=f.findIndex(x=>x.sport===S.ps&&String(x.id)===String(S.player.id));i>=0?f.splice(i,1):f.push({...S.player,sport:S.ps});store.set("fav",f);render()};
+ $("#ptabs").onclick=e=>{const b=e.target.closest("[data-pt]");if(!b)return;S.tab=b.dataset.pt;render()};
+ {const b=$(`#ptabs [data-pt="${S.tab}"]`),k=$("#pink");if(b&&k){k.style.left=b.offsetLeft+"px";k.style.width=b.offsetWidth+"px"}}
+ if(S.tab==="ov"&&S.data&&S.data.games.length)overviewPane();else if(S.tab==="h2h")h2hInit();else if(S.tab==="cmp")comparePane();else profilePane();
+}
+function overviewPane(){const o=$("#pbody"),d=S.data,f=d.stats[S.stat];
  const all=d.games.map(g=>({...g,v:+f(g.raw)})).filter(g=>Number.isFinite(g.v));
+ if(!all.length){o.innerHTML=`<div class="card m" style="margin:0">No numeric ${esc(S.stat)} values in this game log.</div>`;return}
  const w=all.slice(-S.n),vals=w.map(g=>g.v),sa=mean(all.map(g=>g.v));
- if(S.thr==null)S.thr=Math.round(sa*2)/2+.5-(Number.isInteger(Math.round(sa*2)/2)?0:0);
- const ov=vals.filter(v=>v>S.thr).length,un=vals.filter(v=>v<S.thr).length;
- const h=all.filter(g=>g.home),a=all.filter(g=>!g.home);
- const fav=store.get("fav",[]).some(x=>x.sport===S.ps&&x.id===S.player.id);
- o.innerHTML=`<div class="card"><div class="bar">${S.player.photo?`<img class="ph" style="width:48px;height:48px" src="${esc(S.player.photo)}" alt="" onerror="this.style.visibility='hidden'">`:""}<h2 style="margin:0;flex:1">${esc(S.player.name)} <span class="m" style="font-size:14px">${esc(S.player.pos)} ${esc(S.player.team)} ${S.player.league?"· "+esc(S.player.league):""} · ${SEASON} season · ${all.length} games</span></h2>
- <button class="chip" id="fv">${fav?"★ Saved":"☆ Save"}</button>
- ${[["FotMob","https://www.fotmob.com/search?q="],["Sofascore","https://www.sofascore.com/search?q="],["StatMuse","https://www.statmuse.com/ask?q="],...(S.ps==="nba"?[["RealGM","https://basketball.realgm.com/search?q="]]:[])].map(([l,u])=>`<a class="chip" target="_blank" rel="noopener" href="${u}${encodeURIComponent(S.player.name)}">${l} ↗</a>`).join("")}</div>
- <div class="tabs" id="ptabs" role="tablist"><button class="tab ${S.tab!=="h2h"?"on":""}" data-pt="ov" role="tab">Overview</button><button class="tab ${S.tab==="h2h"?"on":""}" data-pt="h2h" role="tab">H2H</button><span class="ink" id="pink"></span></div>
- ${S.tab==="h2h"?'<div id="h2h"></div>':`<div class="bar"><select id="st">${Object.keys(d.stats).map(k=>`<option ${k===S.stat?"selected":""}>${esc(k)}</option>`).join("")}</select>
+ if(S.thr==null)S.thr=Math.round(sa*2)/2+.5;
+ const ov=vals.filter(v=>v>S.thr).length,un=vals.filter(v=>v<S.thr).length,h=all.filter(g=>g.home),a=all.filter(g=>!g.home),so=(sportMeta(S.ps).caps||{}).seasons?seasonOpts(S.ps):[];
+ o.innerHTML=`<div class="bar"><select id="st" aria-label="Statistic">${Object.keys(d.stats).map(k=>`<option ${k===S.stat?"selected":""}>${esc(k)}</option>`).join("")}</select>
  <label class="m">Threshold <input id="th" type="number" step="0.5" value="${S.thr}" style="width:90px"></label>
- ${[5,10,15,20].map(n=>`<button class="chip ${S.n===n?"on":""}" data-n="${n}">L${n}</button>`).join("")}</div>
+ ${[5,10,15,20].map(n=>`<button class="chip ${S.n===n?"on":""}" data-n="${n}">L${n}</button>`).join("")}
+ ${so.length?`<select id="ssn" aria-label="Season"><option value="">Current season</option>${so.map(x=>`<option value="${x.v}" ${x.v===S.season?"selected":""}>${esc(x.l)}</option>`).join("")}</select>`:""}</div>
  <div class="stats">
  <div class="stat"><div class="v g" data-c="${ov}" data-d="0">0</div><div class="l">Over ${S.thr} (last ${vals.length})</div></div>
  <div class="stat"><div class="v r" data-c="${un}" data-d="0">0</div><div class="l">Under ${S.thr}</div></div>
  <div class="stat"><div class="v" data-c="${vals.length?ov/vals.length*100:0}" data-d="0" data-s="%">0</div><div class="l">Hit rate over</div></div>
  <div class="stat"><div class="v" data-c="${mean(vals)}" data-d="2">0</div><div class="l">L${S.n} average</div></div>
  <div class="stat"><div class="v" data-c="${sa}" data-d="2">0</div><div class="l">Season average</div></div>
- <div class="stat"><div class="v" data-c="${mean(h.map(g=>g.v))}" data-d="2">0</div><div class="l">Home avg (${h.length})</div></div>
- <div class="stat"><div class="v" data-c="${mean(a.map(g=>g.v))}" data-d="2">0</div><div class="l">Away avg (${a.length})</div></div></div>
+ ${h.length&&a.length?`<div class="stat"><div class="v" data-c="${mean(h.map(g=>g.v))}" data-d="2">0</div><div class="l">Home avg (${h.length})</div></div><div class="stat"><div class="v" data-c="${mean(a.map(g=>g.v))}" data-d="2">0</div><div class="l">Away avg (${a.length})</div></div>`:""}</div>
  ${chart(w,S.thr,sa)}
- <div class="res" style="margin-top:12px">${w.slice().reverse().map((g,i)=>`<span class="pill ${g.v>S.thr?"o":g.v<S.thr?"u":""}" style="animation-delay:${i*25}ms" title="${esc(fmtD(g))} vs ${esc(g.opp)}">${+g.v.toFixed(2)}</span>`).join("")}</div>
- <p class="m">Newest first. Green = over threshold, red = under, grey = push. Actual historical data from ${esc(P[S.ps].src)}, fetched ${stamp()}. No projections are generated.</p>${["nba","wnba","ncaab"].includes(S.ps)?'<p class="m">Quarter-by-quarter player points are not part of season game logs. Open a game under Live Games, then Player Statistics, to see points by period (computed from play-by-play and checked against the box score).</p>':""}${d.note?`<p class="m">${esc(d.note)}</p>`:""}
- <details><summary>Game log</summary><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">${all.slice().reverse().map(g=>`<tr><td class="m">${esc(fmtD(g))}</td><td>${g.home?"vs":"@"} ${esc(g.opp)}</td><td><b>${+g.v.toFixed(2)}</b></td></tr>`).join("")}</table></div></details>`}</div>`;
- if(S.tab!=="h2h"){$("#st").onchange=e=>{S.stat=e.target.value;S.thr=null;render()};
-  $("#th").onchange=e=>{S.thr=+e.target.value;render()};
-  o.querySelectorAll("[data-n]").forEach(b=>b.onclick=()=>{S.n=+b.dataset.n;render()})}
- $("#ptabs").onclick=e=>{const b=e.target.closest("[data-pt]");if(!b)return;S.tab=b.dataset.pt;render()};
- {const b=$(`#ptabs [data-pt="${S.tab==="h2h"?"h2h":"ov"}"]`),k=$("#pink");if(b&&k){k.style.left=b.offsetLeft+"px";k.style.width=b.offsetWidth+"px"}}
- if(S.tab==="h2h")h2hInit();
- $("#fv").onclick=()=>{let f=store.get("fav",[]);const i=f.findIndex(x=>x.sport===S.ps&&x.id===S.player.id);i>=0?f.splice(i,1):f.push({...S.player,sport:S.ps});store.set("fav",f);render()};
- o.querySelectorAll("[data-c]").forEach(el=>count(el));
-}
-function track(p){PK.cache={};try{const r=store.get("recent",[]).filter(x=>!(x.sport===p.sport&&String(x.id)===String(p.id)));r.unshift({sport:p.sport,id:p.id,name:p.name,photo:p.photo||null,team:p.team||"",pos:p.pos||""});store.set("recent",r.slice(0,10))}catch{}
+ <div class="res" style="margin-top:12px">${w.slice().reverse().map((g,i)=>`<span class="pill ${g.v>S.thr?"o":g.v<S.thr?"u":""}" style="animation-delay:${i*25}ms" title="${esc(fmtD(g)||g.label||"")} vs ${esc(g.opp)}">${+g.v.toFixed(2)}</span>`).join("")}</div>
+ <div class="card m" id="mdl" style="margin:14px 0 0"><span class="spin"></span>Calculating model estimate…</div>
+ <p class="m">Newest first. Green = over threshold, red = under, grey = push. Historical data via ${esc(P[S.ps].src)}, fetched ${stamp()}. ${S.data.linked?`Linked records: ${esc(Object.entries(S.data.linked).map(([k,v])=>k+" "+v).join(", "))}. `:""}The model estimate above is calculated locally and is not a guarantee.</p>${["nba","wnba","ncaab"].includes(S.ps)?'<p class="m">Quarter-by-quarter player points are not part of season game logs. Open a game under Live Games, then Player Statistics, to see points by period (computed from play-by-play and checked against the box score).</p>':""}${d.note?`<p class="m">${esc(d.note)}</p>`:""}
+ <details><summary>Game log</summary><div class="scroll"><table class="st"><tbody>${all.slice().reverse().map(g=>`<tr><td class="m">${esc(fmtD(g)||g.label||"")}</td><td>${g.home?"vs":"@"} ${esc(g.opp)}${g.result?` <span class="m">${esc(g.result)}</span>`:""}</td><td><b>${+g.v.toFixed(2)}</b></td></tr>`).join("")}</tbody></table></div></details>`;
+ $("#st").onchange=e=>{S.stat=e.target.value;S.thr=null;render()};$("#th").onchange=e=>{S.thr=+e.target.value;render()};
+ o.querySelectorAll("[data-n]").forEach(b=>b.onclick=()=>{S.n=+b.dataset.n;render()});
+ if($("#ssn"))$("#ssn").onchange=e=>{S.season=e.target.value;loadLog(S.player)};
+ o.querySelectorAll("[data-c]").forEach(el=>count(el));loadModel()}
+async function loadModel(){const el=$("#mdl");if(!el)return;const key=S.keys[S.stat];
+ if(!PROXY||!key){el.innerHTML='<span class="m">Model estimates need the local server.</span>';return}
+ try{const q=new URLSearchParams({stat:key});if(S.thr!=null)q.set("threshold",S.thr);
+  const d=(await A(`/api/${S.ps}/players/${encodeURIComponent(S.player.id)}/predict?${q}`)).data;const e2=$("#mdl");if(!e2)return;
+  if(!d.available){e2.innerHTML=`<b>Model estimate</b> <span class="m">unavailable: ${esc(d.reason)}</span>`;return}
+  e2.innerHTML=`<div class="bar" style="margin-bottom:4px"><b style="flex:1">Model estimate for the next game</b><span class="tag">model estimate · not a guarantee</span></div><div class="stats" style="margin:8px 0"><div class="stat acc"><div class="v">${d.estimate}</div><div class="l">Expected ${esc(S.stat)}</div></div><div class="stat"><div class="v">${d.low}–${d.high}</div><div class="l">Typical range (±1 SD)</div></div><div class="stat"><div class="v">${d.consistency==null?"n/a":d.consistency}</div><div class="l">Consistency (1 = steady)</div></div>${d.pOverEmpirical!=null?`<div class="stat"><div class="v">${Math.round(d.pOverEmpirical*100)}%</div><div class="l">Over ${d.threshold} in last 20 games${d.pOverNormal!=null?" · curve model "+Math.round(d.pOverNormal*100)+"%":""}</div></div>`:""}</div><p class="m" style="margin:0">${esc(d.method)} Based on ${d.samples} games. ${d.adjustments&&d.adjustments.length?esc(d.adjustments.join("; "))+".":"No opponent or venue adjustment applied; see the H2H tab for matchup history."}</p>`}
+ catch(x){if($("#mdl"))$("#mdl").innerHTML=`<span class="m">Model estimate unavailable: ${esc(x.message)}</span>`}}
+function track(p){try{const r=store.get("recent",[]).filter(x=>!(x.sport===p.sport&&String(x.id)===String(p.id)));r.unshift({sport:p.sport,id:p.id,name:p.name,photo:p.photo||null,team:p.team||"",pos:p.pos||""});store.set("recent",r.slice(0,10))}catch{}
  if(PROXY)fetch(`/api/usage/track?sport=${encodeURIComponent(p.sport)}&id=${encodeURIComponent(p.id)}&name=${encodeURIComponent(p.name||"")}`).catch(()=>{})}
-const favHas=id=>store.get("fav",[]).some(x=>String(x.id)===String(id));
 const phImg=(u,sz)=>u?`<img class="ph" ${sz?`style="width:${sz}px;height:${sz}px"`:""} src="${esc(u)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`:'<span class="ph"></span>';
-const MAINSTAT={nba:"points",wnba:"points",ncaab:"points",nhl:"points",mlb:"hits",soccer:"totalGoals"};
-function picksPanel(){const o=$("#out");if(!o||S.player||S.data)return;
- o.innerHTML=`<div class="view"><div class="card"><div class="bar"><h3 style="margin:0;flex:1">Picks</h3><span style="display:flex;gap:6px;flex-wrap:wrap">${["nba","nhl","mlb"].map(k=>`<button class="chip ${PK.sport===k?"on":""}" data-ps="${k}">${k.toUpperCase()}</button>`).join("")}<button class="chip" id="pkr" title="Refresh lines (uses odds credits)">↻ Refresh lines</button></span></div><div class="t2" id="pkt">${[["popular","Popular"],["trending","Trending"],["form","Form trends"]].map(([k,l])=>`<button class="tab ${PK.tab===k?"on":""}" data-pk="${k}">${l}</button>`).join("")}</div><div id="pkb"><div class="sk"></div></div></div></div>`;
- o.onclick=e=>{const b=e.target.closest("[data-ps],[data-pk],[data-r],[data-fr],#pkr");if(!b)return;
-  if(b.dataset.ps){PK.sport=b.dataset.ps;picksPanel()}
+const MAINSTAT={nba:"points",wnba:"points",ncaab:"points",nhl:"points",mlb:"hits",soccer:"totalGoals",nfl:"passingYards",f1:"points",tennis:"aces"};
+const DIRECT_ID=["mlb","nhl","f1","tennis"];
+/* ---------- Statistical insights: leaders, recent form, model estimates (no betting data) ---------- */
+function insightsPanel(){const o=$("#out");if(!o||S.player||!REG)return;
+ const sports=REG.sports.filter(x=>x.caps&&x.caps.leaders),sp=sportMeta(PK.sport),lgs=sp.leagues||[];
+ o.innerHTML=`<div class="view"><div class="card"><div class="bar"><h3 style="margin:0;flex:1">Statistical insights</h3><span style="display:flex;gap:6px;flex-wrap:wrap">${sports.map(x=>`<button class="chip ${PK.sport===x.key?"on":""}" data-ps="${x.key}">${esc(x.label)}</button>`).join("")}${lgs.length?`<select id="pkl" aria-label="League">${lgs.map(l=>`<option ${l===PK.league?"selected":""}>${esc(l)}</option>`).join("")}</select>`:""}</span></div>
+ <div class="t2" id="pkt">${[["leaders","Statistical leaders"],["form","Recent form & model estimates"],["pop","Your most researched"]].map(([k,l])=>`<button class="tab ${PK.tab===k?"on":""}" data-pk="${k}">${l}</button>`).join("")}</div><div id="pkb"><div class="sk"></div></div></div></div>`;
+ o.onclick=e=>{const b=e.target.closest("[data-ps],[data-pk],[data-ld],[data-fr],[data-pp]");if(!b)return;
+  if(b.dataset.ps){PK.sport=b.dataset.ps;PK.league=sportMeta(PK.sport).leagues?.[0]||"";insightsPanel()}
   else if(b.dataset.pk){PK.tab=b.dataset.pk;$("#pkt").querySelectorAll(".tab").forEach(x=>x.classList.toggle("on",x===b));pkBody()}
-  else if(b.id==="pkr"){delete PK.cache[PK.sport];loadPicks(true)}
-  else if(b.dataset.r!=null){const p=PK.list[b.dataset.r];if(p){S.preset={key:p.statKey,thr:p.line};if(PROXY)fetch(`/api/usage/track?sport=${PK.sport}&stat=${encodeURIComponent(p.statKey)}`).catch(()=>{});pick({...p.player,sport:PK.sport})}}
-  else if(b.dataset.fr!=null){const f=PK.forms[b.dataset.fr];if(f)pick({...f,sport:f.sport})}};
- loadPicks(false)}
-async function loadPicks(refresh){const c=PK.cache[PK.sport];if(c&&Date.now()-c.t<3e5&&!refresh){PK.data=c.data;pkBody();return}
- if($("#pkb"))$("#pkb").innerHTML='<div class="sk"></div>';
- try{const r=await A(`/api/picks?sport=${PK.sport}${refresh?"&refresh=1":""}`);PK.data=r.data;PK.cache[PK.sport]={t:Date.now(),data:r.data}}catch(x){PK.data={error:x.message,picks:[],configured:null}}
+  else if(b.dataset.ld!=null){const [ci,ei]=b.dataset.ld.split(".").map(Number),e2=(PK.leaders.categories[ci]||{entries:[]}).entries[ei];if(!e2)return;
+   if(DIRECT_ID.includes(PK.sport))pick({id:e2.id,name:e2.name,team:e2.team||"",sport:PK.sport});else{const q=$("#q");q.value=e2.name;q.dispatchEvent(new Event("input"))}}
+  else if(b.dataset.fr!=null){const f=PK.forms[b.dataset.fr];if(f)pick({...f,sport:f.sport})}
+  else if(b.dataset.pp!=null){const f=PK.pop[b.dataset.pp];if(f)pick({...f})}};
+ if($("#pkl"))$("#pkl").onchange=e=>{PK.league=e.target.value;pkBody()};
+ if(!PK.league&&lgs.length)PK.league=lgs[0];
  pkBody()}
-function pickCard(p,i){const f=p.form,tr=f&&f.trendPct!=null?`<b class="${f.trendPct>=0?"g":"r"}">${f.trendPct>=0?"▲ +":"▼ "}${f.trendPct}%</b>`:"";
- return`<div class="card pick"><div class="pk-h">${phImg(p.player.photo)}<div><b>${esc(p.player.name)}</b><div class="m">${esc(p.player.team)} vs ${esc(p.opponent)} · ${esc(fmtDT(p.game.startTime))}</div></div></div>
- <div class="pk-l"><span class="m">${esc(p.marketLabel)}</span><span class="n">${p.line}</span><span class="m">consensus line · ${p.books.length} book${p.books.length>1?"s":""}</span></div>
- <div class="m">Over ${p.over?fmtP(p.over.over)+" ("+esc(p.over.book)+")":"Line unavailable"} · Under ${p.under?fmtP(p.under.under)+" ("+esc(p.under.book)+")":"Line unavailable"}</div>
- ${f?`<div class="dots" title="Last ${f.recent.length} games vs the line (oldest to newest)">${f.recent.map(v=>`<i class="${v>p.line?"o":v<p.line?"u":""}"></i>`).join("")}</div><div class="m">Over in ${f.last10.over}/${f.last10.n} · last 5 avg ${f.last5Avg} · season avg ${f.seasonAvg} ${tr}</div>`:'<div class="m">Recent form unavailable (game log could not be loaded).</div>'}
- <div>${(p.trendReasons||[]).map(r=>`<span class="tag hot">${esc(r)}</span>`).join("")}${favHas(p.player.id)?'<span class="tag">★ favorite</span>':""}</div>
- <div class="m" style="font-size:12px">Lines updated ${esc(new Date(p.linesFetchedAt).toLocaleString())}</div><button class="chip" data-r="${i}">Open research →</button></div>`}
-function pkBody(){const el=$("#pkb");if(!el)return;const d=PK.data||{};
+async function pkBody(){const el=$("#pkb");if(!el)return;
  if(PK.tab==="form"){formTrends(el);return}
- if(d.configured===false||d.supported===false){el.innerHTML=`<div class="card m" style="margin:0"><b>Line unavailable.</b> ${esc(d.message||"")}${d.supported!==false?`<br><br>To load real sportsbook lines: get a free key at the-odds-api.com (no card needed), create a file named <code>.env</code> next to server.js containing <code>ODDS_API_KEY=your_key</code>, and restart the server. The free plan has 500 credits per month; this app stops at 400 and refreshes lines about once a day.`:""}</div>`;return}
- if(d.error&&!(d.picks||[]).length&&!d.configured){el.innerHTML=`<div class="err">${esc(d.error)}</div>`;return}
- let list=(d.picks||[]).map(p=>({...p,pop:(p.popularity||0)+(favHas(p.player.id)?2:0)}));
- list=PK.tab==="popular"?list.filter(p=>p.pop>0).sort((a,b)=>b.pop-a.pop):list.filter(p=>(p.trendReasons||[]).length).sort((a,b)=>b.trendReasons.length-a.trendReasons.length||Math.abs(b.form?.trendPct||0)-Math.abs(a.form?.trendPct||0));
- PK.list=list;
- const expl=PK.tab==="popular"?"Popular = props for players and stat categories you research most in this app, plus your favorites. It reflects your own activity only.":"Trending = a prop meets a measurable rule: last-5 average 15%+ away from the season average, 8+ of the last 10 games on one side of the line, or the line moved 1+ since this server first saw it.";
- el.innerHTML=`<p class="m" style="margin-top:0">${expl}</p>`+(list.length?`<div class="pgrid">${list.map(pickCard).join("")}</div>`:`<p class="m">${PK.tab==="popular"?"Nothing popular yet. Search and open players, or save favorites, and their props will appear here.":"No current prop meets a trend rule."}${d.meta?` ${d.meta.events} game(s) loaded${d.meta.unmatchedProps?`; ${d.meta.unmatchedProps} prop(s) skipped because the player could not be matched safely`:""}.`:""}</p>`)+(d.error?`<div class="err" style="margin-top:8px">${esc(d.error)}</div>`:"")+(d.meta?`<p class="m">Lines fetched ${esc(new Date(d.meta.fetchedAt).toLocaleString())}. Credits used this month: ${d.meta.creditsUsedThisMonth??"n/a"} of ${d.meta.creditBudget}. ${esc(d.meta.note)}</p>`:"")}
+ if(PK.tab==="pop"){popular(el);return}
+ el.innerHTML='<div class="sk"></div>';const key=PK.sport+"|"+PK.league,c=PK.cache[key];
+ try{let d;if(c&&Date.now()-c.t<6e5)d=c.d;else{d=(await A(`/api/insights?sport=${PK.sport}&league=${encodeURIComponent(PK.league)}`)).data;PK.cache[key]={t:Date.now(),d}}
+  PK.leaders=d;if(!$("#pkb")||PK.tab!=="leaders")return;
+  if(!d.categories||!d.categories.length){$("#pkb").innerHTML=`<p class="m">${esc(d.message||"No leaders are available for this sport right now.")}</p>`;return}
+  $("#pkb").innerHTML=`<div class="pgrid">${d.categories.map((cat,ci)=>`<div class="card pick"><b>${esc(cat.label)}</b><div>${cat.entries.map((e,ei)=>`<div class="hit" tabindex="0" data-ld="${ci}.${ei}" style="padding:6px 8px"><span><span class="m">${e.rank}.</span> ${esc(e.name)} <span class="m">${esc(e.team||"")}</span></span><b>${esc(e.value)}</b></div>`).join("")}</div></div>`).join("")}</div>
+   <p class="m">Source: ${esc((d.meta&&d.meta.provider)||PK.sport)}${d.meta&&d.meta.fetchedAt?`, fetched ${esc(new Date(d.meta.fetchedAt).toLocaleString())}`:""}${d.season?` · season ${esc(d.season)}`:""}. ${PK.sport==="nfl"?"Totals are summed locally from nflverse weekly data. ":""}${PK.sport==="tennis"?"Historical dataset, CC BY-NC-SA (non-commercial). ":""}See the Sources page for licenses and limits. Click a name to open the athlete.</p>`}
+ catch(x){if($("#pkb"))$("#pkb").innerHTML=`<div class="err">Could not load leaders: ${esc(x.message)}</div>`}}
 async function formTrends(el){const list=[...store.get("fav",[]),...store.get("recent",[])].filter((x,i,a)=>x.sport&&MAINSTAT[x.sport]&&a.findIndex(y=>y.sport===x.sport&&String(y.id)===String(x.id))===i).slice(0,8);
- if(!list.length){el.innerHTML='<p class="m">Save favorites or research a few players and their recent form shows up here (last 5 games vs season average).</p>';return}
+ if(!list.length){el.innerHTML='<p class="m">Save favorites or research a few athletes and their recent form shows here: last 5 games vs season average, plus a locally calculated model estimate.</p>';return}
  el.innerHTML='<div class="sk"></div>';
- const rs=await Promise.allSettled(list.map(async x=>{const d=(await A(`/api/${x.sport}/players/${x.id}/gamelog`)).data,k=MAINSTAT[x.sport],v=d.games.filter(g=>!g.dnp).map(g=>g.stats[k]).filter(Number.isFinite);if(v.length<5)throw 0;const sa=mean(v),a5=mean(v.slice(-5));return{...x,k,sa,a5,n:v.length,pct:sa?(a5-sa)/sa*100:0}}));
+ const rs=await Promise.allSettled(list.map(async x=>{const k=MAINSTAT[x.sport],d=(await A(`/api/${x.sport}/players/${encodeURIComponent(x.id)}/gamelog`)).data,v=d.games.filter(g=>!g.dnp).map(g=>g.stats[k]).filter(Number.isFinite);if(v.length<5)throw 0;
+  const sa=mean(v),a5=mean(v.slice(-5));let est=null;try{est=(await A(`/api/${x.sport}/players/${encodeURIComponent(x.id)}/predict?stat=${k}`)).data}catch{}
+  return{...x,k,sa,a5,n:v.length,pct:sa?(a5-sa)/sa*100:0,est}}));
  PK.forms=rs.filter(r=>r.status==="fulfilled").map(r=>r.value);if(!$("#pkb")||PK.tab!=="form")return;
- $("#pkb").innerHTML=PK.forms.length?`<div class="pgrid">${PK.forms.map((f,i)=>`<div class="card pick"><div class="pk-h">${phImg(f.photo)}<div><b>${esc(f.name)}</b><div class="m">${esc(f.team||"")} · ${esc(pretty(f.k))}</div></div></div><div class="pk-l"><span class="n">${f.a5.toFixed(1)}</span><span class="m">last 5 avg vs ${f.sa.toFixed(1)} season (${f.n} games)</span><b class="${f.pct>=0?"g":"r"}">${f.pct>=0?"+":""}${f.pct.toFixed(0)}%</b></div><button class="chip" data-fr="${i}">Open research →</button></div>`).join("")}</div><p class="m">Form trends use your favorites and recently researched players. They are real game-log averages, not betting lines.</p>`:'<p class="m">Form could not be computed for your saved players (game log unavailable, or fewer than 5 games).</p>'}
-/* ---------- H2H ---------- */
-function h2hInit(){const el=$("#h2h");if(!el)return;
- el.innerHTML=`<div class="bar"><input id="oq" placeholder="Search opponent team…" style="flex:1;min-width:180px" aria-label="Opponent team" value="${esc(S.opp?S.opp.name:"")}"><select id="hs" aria-label="Seasons">${[1,2,3,5].map(n=>`<option value="${n}" ${S.hs===n?"selected":""}>${n} season${n>1?"s":""}</option>`).join("")}</select><label class="m">From <input id="hf" type="date" value="${S.hf||""}"></label><label class="m">To <input id="ht" type="date" value="${S.ht||""}"></label></div><div id="oh"></div><div id="hb">${S.opp?"":'<p class="m">Search for an opposing team to see how this player has performed against them. Dates use US Eastern calendar days for filtering.</p>'}</div>`;
+ $("#pkb").innerHTML=PK.forms.length?`<div class="pgrid">${PK.forms.map((f,i)=>`<div class="card pick"><div class="pk-h">${phImg(f.photo)}<div><b>${esc(f.name)}</b><div class="m">${esc(f.team||"")} · ${esc(pretty(f.k))} · ${esc(sportMeta(f.sport).label)}</div></div></div><div class="pk-l"><span class="n">${f.a5.toFixed(1)}</span><span class="m">last 5 avg vs ${f.sa.toFixed(1)} season (${f.n} games)</span><b class="${f.pct>=0?"g":"r"}">${f.pct>=0?"+":""}${f.pct.toFixed(0)}%</b></div>${f.est&&f.est.available?`<div class="m"><span class="tag">model estimate</span> next game about <b>${f.est.estimate}</b> (typical range ${f.est.low}–${f.est.high})</div>`:'<div class="m">Model estimate unavailable.</div>'}<button class="chip" data-fr="${i}">Open research →</button></div>`).join("")}</div><p class="m">Form uses your favorites and recently researched athletes. Averages are real game-log values; estimates are calculated locally from them and are not guarantees.</p>`:'<p class="m">Form could not be computed for your saved athletes (game log unavailable, or fewer than 5 games).</p>'}
+async function popular(el){let list=[];
+ try{const u=(await A("/api/usage")).data.players||{};list=Object.entries(u).map(([k,v])=>({sport:k.split(":")[0],id:k.split(":").slice(1).join(":"),name:v.name,n:v.n}))}catch{}
+ for(const f of store.get("fav",[])){const x=list.find(y=>y.sport===f.sport&&String(y.id)===String(f.id));if(x)x.n+=2;else list.push({sport:f.sport,id:f.id,name:f.name,n:2})}
+ list.sort((a,b)=>b.n-a.n);PK.pop=list.slice(0,12);
+ el.innerHTML=PK.pop.length?`<p class="m" style="margin-top:0">Ranked by how often you opened each athlete in this app (favorites count extra). It reflects your own activity only.</p><div class="pgrid">${PK.pop.map((x,i)=>`<div class="card pick"><b>${esc(x.name||x.id)}</b><div class="m">${esc(sportMeta(x.sport).label)} · opened ${x.n}×</div><button class="chip" data-pp="${i}">Open research →</button></div>`).join("")}</div>`:'<p class="m">Nothing yet. Open a few athletes or save favorites and they will be ranked here.</p>'}
+/* ---------- Profile & career ---------- */
+async function profilePane(){const el=$("#pbody");if(!el)return;
+ if(S.profile||S.profErr){profileRender();return}
+ el.innerHTML=`${S.err?`<div class="err" style="margin-bottom:8px">${esc(S.err)}</div>`:""}<div class="sk"></div><p class="m"><span class="spin"></span>Loading profile and season history…</p>`;
+ try{S.profile=(await A(`/api/${S.ps}/players/${encodeURIComponent(S.player.id)}/profile`)).data;S.profErr=null}catch(x){S.profErr=x.message}
+ if(S.tab==="profile"&&$("#pbody"))profileRender()}
+function kindTag(k){return`<span class="tag ${k==="unavailable"?"":"hot"}" title="${esc({official:"Value as published by the provider",provided:"Model value computed and published by the provider",calculated:"Calculated locally from raw provider data",unavailable:"Not available from the free sources used"}[k]||"")}">${{official:"official",provided:"provider model",calculated:"calculated",unavailable:"data unavailable"}[k]||k}</span>`}
+function advList(list){return list&&list.length?`<div class="res">${list.map(x=>x.kind==="unavailable"?`<span class="tag" title="${esc(x.reason||"")}">${esc(x.label)}: data unavailable</span>`:`<span class="pill" style="background:var(--p2)" title="${esc(x.formula||"")}${x.note?" · "+esc(x.note):""}">${esc(x.label)} <b>${esc(x.value)}</b> ${kindTag(x.kind)}</span>`).join("")}</div>`:""}
+function profileRender(){const el=$("#pbody");if(!el)return;
+ const warn=S.err?`<div class="err" style="margin-bottom:8px">${esc(S.err)}</div>`:"";
+ if(S.profErr){el.innerHTML=warn+`<div class="err">Profile unavailable: ${esc(S.profErr)}</div>`;return}
+ const p=S.profile,seasons=p.seasons||[],bio=p.bio||{};
+ const facts=[["Born",p.dob||bio.born],["Birthplace",bio.birthLocation],["Country",p.country],["Height",p.height||bio.height],["Weight",bio.weight],["Bats / throws",p.bats?`${p.bats} / ${p.throws}`:null],["Hand",p.hand],["MLB debut",p.debut],["Number",p.number]].filter(x=>x[1]);
+ const keys=[...new Set(seasons.flatMap(x=>Object.entries(x.stats||{}).filter(([,v])=>typeof v!=="object").map(([k])=>k)))].slice(0,12),car=p.career,surf=seasons[0]&&seasons[0].stats&&seasons[0].stats.surface;
+ const careerHTML=car&&!car.championships&&typeof car==="object"?Object.entries(car).map(([g,c])=>c&&c.stats?`<p class="m" style="margin:10px 0 4px"><b>Career${Object.keys(car).length>1?" · "+esc(g):""}</b> ${kindTag(c.kind||"official")}</p><div class="res">${Object.entries(c.stats).map(([k,v])=>`<span class="pill" style="background:var(--p2)">${esc(pretty(k))} <b>${esc(v)}</b></span>`).join("")}</div>${advList(c.advanced)}`:"").join(""):car?`<p class="m" style="margin:10px 0 4px"><b>Career</b> ${kindTag(p.careerKind||"calculated")}</p><div class="res">${Object.entries(car).map(([k,v])=>`<span class="pill" style="background:var(--p2)">${esc(pretty(k))} <b>${esc(v)}</b></span>`).join("")}</div>`:"";
+ el.innerHTML=warn+`${facts.length?`<div class="res" style="margin-bottom:10px">${facts.map(([k,v])=>`<span class="pill" style="background:var(--p2)">${esc(k)} <b>${esc(v)}</b></span>`).join("")}</div>`:""}${bio.description?`<p class="m">${esc(bio.description)}</p>`:""}
+ ${p.statsAvailable===false?'<div class="card m" style="margin:0">Profile and image only. No statistics source is integrated for this sport, so no statistics are shown rather than inventing any.</div>':""}
+ ${p.unlinked?`<div class="card m" style="margin:0 0 8px">${esc(p.unlinked)}</div>`:""}
+ ${p.personalBests?`<p class="m" style="margin:10px 0 4px"><b>Personal bests</b> (max across listed meets)</p><div class="res">${Object.entries(p.personalBests).map(([k,v])=>`<span class="pill" style="background:var(--p2)">${esc(pretty(k))} <b>${esc(v)} kg</b></span>`).join("")}</div>`:""}
+ ${seasons.length?`<p class="m" style="margin:12px 0 4px"><b>Season by season</b></p><div class="scroll"><table class="st"><thead><tr><th>Season</th><th>Team</th>${keys.map(k=>`<th title="${esc(pretty(k))}">${esc(pretty(k).replace(/ Per Game/,"/G"))}</th>`).join("")}</tr></thead><tbody>${seasons.map(x=>`<tr><td>${esc(x.season)}${x.group?` <span class="m">${esc(x.group)}</span>`:""}</td><td>${esc(x.team||"")}</td>${keys.map(k=>`<td>${x.stats&&x.stats[k]!=null?esc(typeof x.stats[k]==="object"?"":x.stats[k]):'<span class="na">n/a</span>'}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+ ${seasons[0].advanced&&seasons[0].advanced.length?`<p class="m" style="margin:10px 0 4px"><b>Advanced · ${esc(seasons[0].season)}</b> ${kindTag(seasons[0].kind||"calculated")}</p>${advList(seasons[0].advanced)}`:`<p class="m" style="margin:8px 0 0">Rates in the table are ${kindTag(seasons[0].kind||"calculated")} from raw match counts.</p>`}${surf?`<p class="m" style="margin:10px 0 4px"><b>Win % by surface · ${esc(seasons[0].season)}</b> ${kindTag("calculated")}</p><div class="res">${Object.entries(surf).map(([k,v])=>`<span class="pill" style="background:var(--p2)">${esc(k)} <b>${v.winPct}%</b> <span class="m">${v.matches} matches</span></span>`).join("")}</div>`:""}`:""}
+ ${careerHTML}
+ ${(p.extraUnavailable||[]).length?`<p class="m" style="margin:12px 0 4px"><b>Not available (not estimated)</b></p>${p.extraUnavailable.map(x=>`<p class="m" style="margin:2px 0"><span class="tag">data unavailable</span> ${esc(x.label)}: ${esc(x.reason)}</p>`).join("")}`:""}
+ ${p.careerNote?`<p class="m">${esc(p.careerNote)}</p>`:""}
+ <p class="m" style="font-size:12px">Identity: <code>${esc((p.identity&&p.identity.murdaId)||"")}</code> · provider ids ${esc(Object.entries((p.identity&&p.identity.providers)||{}).map(([k,v])=>k+" "+v).join(", "))}${p.identity&&p.identity.linkBasis?" · linked by "+esc(p.identity.linkBasis):""} · Source: ${esc((p.meta&&p.meta.provider)||"see Sources")}${p.meta&&p.meta.fetchedAt?", fetched "+esc(new Date(p.meta.fetchedAt).toLocaleString()):""}${p.meta&&p.meta.license?" · License: "+esc(p.meta.license):""}</p>`}
+/* ---------- Compare ---------- */
+function comparePane(){const el=$("#pbody");
+ el.innerHTML=`<div class="bar"><input id="cq" placeholder="Search a second ${esc(sportMeta(S.ps).label)} athlete to compare…" style="flex:1" aria-label="Compare with"></div><div id="ch"></div><div id="cb">${S.cmp?"":'<p class="m">Pick another athlete in the same sport to compare per-game averages side by side.</p>'}</div>`;
+ let t;$("#cq").oninput=e=>{clearTimeout(t);const q=e.target.value.trim();if(q.length<2){$("#ch").innerHTML="";return}
+  t=setTimeout(async()=>{$("#ch").innerHTML='<p class="m"><span class="spin"></span>Searching…</p>';
+   try{const r=(await A(`/api/search?q=${encodeURIComponent(q)}&sport=${S.ps}`)).data.players.filter(x=>String(x.id)!==String(S.player.id)).slice(0,6);
+    $("#ch").innerHTML=r.length?`<div class="res" style="margin:6px 0">${r.map((x,i)=>`<button class="chip" data-co="${i}">${esc(x.name)} <span class="m">${esc(x.team||"")}</span></button>`).join("")}</div>`:'<p class="m">No matches.</p>';
+    $("#ch").onclick=ev=>{const b=ev.target.closest("[data-co]");if(b)loadCompare({...r[b.dataset.co],sport:S.ps})}}catch(x){$("#ch").innerHTML=`<div class="err">${esc(x.message)}</div>`}},250)};
+ if(S.cmp)cmpRender()}
+async function loadCompare(o){$("#ch").innerHTML="";$("#cb").innerHTML='<div class="sk"></div>';
+ try{const [a,b]=await Promise.all([A(`/api/${S.ps}/players/${encodeURIComponent(S.player.id)}/stats`),A(`/api/${S.ps}/players/${encodeURIComponent(o.id)}/stats`)]);S.cmp={o,a:a.data,b:b.data};if(S.tab==="cmp")cmpRender()}
+ catch(x){$("#cb").innerHTML=`<div class="err">Compare failed: ${esc(x.message)}</div>`}}
+function cmpRender(){const el=$("#cb"),c=S.cmp;if(!el||!c)return;
+ const keys=Object.keys(c.a.season||{}).filter(k=>c.a.season[k]!=null&&c.b.season&&c.b.season[k]!=null),f=v=>+(+v).toFixed(2);
+ el.innerHTML=keys.length?`<div class="card" style="margin:8px 0 0"><div class="cmp" style="font-weight:700"><span>${esc(S.player.name)} <span class="m">(${c.a.games} games)</span></span><span class="lb">per-game average</span><span style="text-align:right">${esc(c.o.name)} <span class="m">(${c.b.games} games)</span></span></div>${keys.map(k=>`<div class="cmp"><span class="v ${c.a.season[k]>c.b.season[k]?"g":""}">${f(c.a.season[k])}</span><span class="lb">${esc(pretty(k))}</span><span class="v ${c.b.season[k]>c.a.season[k]?"g":""}">${f(c.b.season[k])}</span></div>`).join("")}<p class="m" style="margin-bottom:0">Green = higher value (for turnovers or fouls higher is not better). Averages are calculated from each athlete's game log in the data currently loaded; competition level and minutes are not adjusted for.</p></div>`:'<p class="m">These two athletes have no comparable numeric statistics in the data loaded.</p>'}
+/* ---------- H2H (team opponents, or a player opponent for tennis) ---------- */
+function h2hInit(){const el=$("#pbody");if(!el)return;const ten=S.ps==="tennis";
+ el.innerHTML=`<div class="bar"><input id="oq" placeholder="${ten?"Search an opposing player…":"Search opponent team…"}" style="flex:1;min-width:180px" aria-label="Opponent" value="${esc(S.opp?S.opp.name:"")}"><select id="hs" aria-label="Seasons">${[1,2,3,5].map(n=>`<option value="${n}" ${S.hs===n?"selected":""}>${n} season${n>1?"s":""}</option>`).join("")}</select>${ten?"":`<label class="m">From <input id="hf" type="date" value="${S.hf||""}"></label><label class="m">To <input id="ht" type="date" value="${S.ht||""}"></label>`}</div><div id="oh"></div><div id="hb">${S.opp?"":`<p class="m">Search for ${ten?"an opposing player":"an opposing team"} to see how ${esc(S.player.name)} has performed against ${ten?"them":"that opponent"}. ${ten?"":"Dates use US Eastern calendar days for filtering."}</p>`}</div>`;
  let t;$("#oq").oninput=e=>{clearTimeout(t);const q=e.target.value.trim();if(q.length<2){$("#oh").innerHTML="";return}
-  t=setTimeout(async()=>{$("#oh").innerHTML='<p class="m"><span class="spin"></span>Searching teams…</p>';
-   try{const tm=(await P[S.ps].teams(q)).slice(0,8);$("#oh").innerHTML=tm.length?`<div class="res" style="margin:6px 0">${tm.map((x,i)=>`<button class="chip" data-o="${i}">${x.logo?`<img class="logo-s" src="${esc(x.logo)}" alt="" onerror="this.style.display='none'">`:""}${esc(x.name)}${x.league&&S.ps==="soccer"?" · "+esc(x.league):""}</button>`).join("")}</div>`:'<p class="m">No team matches.</p>';
+  t=setTimeout(async()=>{$("#oh").innerHTML='<p class="m"><span class="spin"></span>Searching…</p>';
+   try{const tm=(ten?(await A(`/api/tennis/players?q=${encodeURIComponent(q)}`)).data.players.filter(x=>x.id!==S.player.id):await P[S.ps].teams(q)).slice(0,8);
+    $("#oh").innerHTML=tm.length?`<div class="res" style="margin:6px 0">${tm.map((x,i)=>`<button class="chip" data-o="${i}">${x.logo?`<img class="logo-s" src="${esc(x.logo)}" alt="" onerror="this.style.display='none'">`:""}${esc(x.name)}${x.league&&(S.ps==="soccer"||ten)?" · "+esc(x.league):""}</button>`).join("")}</div>`:`<p class="m">No ${ten?"player":"team"} matches.</p>`;
     $("#oh").onclick=ev=>{const b=ev.target.closest("[data-o]");if(b){S.opp=tm[b.dataset.o];$("#oh").innerHTML="";$("#oq").value=S.opp.name;h2hLoad()}}}
-   catch(x){$("#oh").innerHTML=`<div class="err">Team search failed: ${esc(x.message)}</div>`}},250)};
- const re=()=>{S.hs=+$("#hs").value;S.hf=$("#hf").value;S.ht=$("#ht").value;if(S.opp)h2hLoad()};
- $("#hs").onchange=re;$("#hf").onchange=re;$("#ht").onchange=re;
+   catch(x){$("#oh").innerHTML=`<div class="err">Search failed: ${esc(x.message)}</div>`}},250)};
+ const re=()=>{S.hs=+$("#hs").value;if($("#hf")){S.hf=$("#hf").value;S.ht=$("#ht").value}if(S.opp)h2hLoad()};
+ $("#hs").onchange=re;if($("#hf")){$("#hf").onchange=re;$("#ht").onchange=re}
  if(S.opp&&S.h2h)h2hRender();else if(S.opp)h2hLoad()}
 async function h2hLoad(){const b=$("#hb");if(!b||!S.opp)return;
  b.innerHTML=`<div class="sk"></div><p class="m"><span class="spin"></span>Loading ${S.hs} season${S.hs>1?"s":""} of history${S.ps==="soccer"?" from match box scores (can take several seconds)":""}…</p>`;
  try{const q=new URLSearchParams({opponent:S.opp.id,seasons:S.hs});if(S.opp.path)q.set("path",S.opp.path);if(S.hf)q.set("from",S.hf);if(S.ht)q.set("to",S.ht);
-  S.h2h=(await A(`/api/${S.ps}/players/${S.player.id}/h2h?${q}`)).data;h2hRender()}catch(x){if($("#hb"))$("#hb").innerHTML=`<div class="err">H2H failed: ${esc(x.message)}</div>`}}
-function h2hRender(){const b=$("#hb"),d=S.h2h;if(!b||!d)return;const o=d.opponent;
+  S.h2h=(await A(`/api/${S.ps}/players/${encodeURIComponent(S.player.id)}/h2h?${q}`)).data;h2hRender()}catch(x){if($("#hb"))$("#hb").innerHTML=`<div class="err">H2H failed: ${esc(x.message)}</div>`}}
+function h2hRender(){const b=$("#hb"),d=S.h2h;if(!b||!d)return;
+ if(S.ps==="tennis"){b.innerHTML=d.count?`<p class="m" style="margin:10px 0"><b>${esc(S.player.name)} vs ${esc(S.opp.name)}</b> · last ${d.seasonsChecked} seasons</p><div class="stats"><div class="stat"><div class="v">${d.wins}–${d.losses}</div><div class="l">Record (${d.count} meetings)</div></div>${Object.entries(d.bySurface).map(([k,v])=>`<div class="stat"><div class="v">${v.w}–${v.l}</div><div class="l">${esc(k)}</div></div>`).join("")}</div><div class="scroll"><table class="st"><thead><tr><th>Date</th><th>Tournament</th><th>Surface · round</th><th>Result</th></tr></thead><tbody>${d.games.slice().reverse().map(g=>`<tr><td>${esc(fmtD(g))}</td><td>${esc(g.seasonType||"")}</td><td>${esc(g.competition||"")}</td><td><b>${esc(g.result)}</b></td></tr>`).join("")}</tbody></table></div><p class="m">${esc(d.note)}</p>`:`<div class="card m" style="margin:0">No meetings with ${esc(S.opp.name)} in the last ${d.seasonsChecked} seasons of the dataset.</div>`;return}
+ const o=d.opponent;
  const head=`<p class="m" style="margin:10px 0">${o.logo?`<img class="logo-s" src="${esc(o.logo)}" alt="" onerror="this.style.display='none'">`:""}<b>${esc(S.player.name)} vs ${esc(o.name)}</b> · seasons checked: ${esc(d.seasonsChecked.join(", "))}</p>`;
  const fails=d.failedSeasons.length?`<div class="err" style="margin:8px 0">Could not load: ${d.failedSeasons.map(f=>esc(f.season+" ("+f.error+")")).join("; ")}. Results may be incomplete.</div>`:"";
  if(!d.count){b.innerHTML=head+`<div class="card m" style="margin:0">No meetings with ${esc(o.name)} were found in the data for the seasons and dates selected. Try more seasons or clear the date range.${S.ps==="soccer"?" Soccer H2H only covers meetings in this player's current league.":""}</div>`+fails+`<p class="m">${esc(d.note)}</p>`;return}
@@ -417,14 +485,20 @@ function chart(w,thr,sa,hi=0,avgLabel="season average"){
 function favs(){const f=store.get("fav",[]);
  $("#app").innerHTML=`<div class="view">${f.length?f.map((p,i)=>`<div class="card hit" data-i="${i}"><span>${esc(p.name)}</span><span class="m">${esc(P[p.sport]?.label)} · ${esc(p.pos)} ${esc(p.team)}</span></div>`).join(""):'<div class="card m">No favorites yet. Save a player from Player Research.</div>'}</div>`;
  $("#app").onclick=e=>{const h=e.target.closest("[data-i]");if(h&&f[h.dataset.i]){go("research");pick(f[h.dataset.i])}}}
-function src(){$("#app").innerHTML=`<div class="view"><div class="card"><h3>Data sources</h3>
-<p><b>GitHub Actions snapshots</b> – fallback when the local server is off. Collected about every 15 min (scoreboards) and hourly (standings, tracked players only). Not real-time.</p><p><b>Local API (/api)</b> – normalized endpoints in api.js with caching, rate spacing and stale-if-error. See /api/sports and /api/health on your server.</p><p><b>ESPN athlete endpoints</b> – NBA, WNBA, NFL, NCAA player search and game logs. Unofficial; NCAA logs are unverified.</p><p><b>MLB Stats API</b> – player search and game logs. Public, no key.</p>
-<p><b>NHL Web API</b> – player search and game logs. Public, no key, undocumented/unofficial.</p>
-<p><b>ESPN public scoreboards</b> – live scores for NBA, NFL, MLB, NHL, NCAA, soccer. Undocumented; can change or disappear without notice.</p>
-<p class="m">Not yet implemented: NBA/NFL/NCAA/soccer/tennis player game logs, opponent splits, advanced stats. These need a provider decision (ESPN athlete endpoints, football-data.org free key, or open datasets). Nothing here is estimated or generated.</p></div></div>`}
+async function src(){const v=$("#app");v.innerHTML='<div class="view"><div class="sk"></div></div>';
+ if(!PROXY){v.innerHTML='<div class="view"><div class="card"><h3>Sources &amp; methodology</h3><p class="m">This page reads from the local server. Run <code>node server.js</code> and open http://localhost:8787.</p></div></div>';return}
+ try{const d=(await A("/api/sources")).data,by=st=>d.providers.filter(p=>p.status===st),tag={integrated:"integrated",optional:"optional (free key)",dataset:"dataset download",["not-integrated"]:"not integrated"};
+  const prov=p=>`<div class="card" style="margin:0 0 10px"><div class="bar" style="margin-bottom:4px"><b style="flex:1">${esc(p.name)}</b><span class="tag ${p.status==="integrated"?"hot":""}">${tag[p.status]}${p.configured===false?" · not configured":p.configured===true?" · ready":""}</span></div>
+   ${p.usedFor?`<p class="m" style="margin:2px 0">Used for: ${esc(p.usedFor)}</p>`:""}${p.reason?`<p class="m" style="margin:2px 0">${esc(p.reason)}</p>`:""}${p.license?`<p class="m" style="margin:2px 0">License / terms: ${esc(p.license)}</p>`:""}${p.limits?`<p class="m" style="margin:2px 0">Limits: ${esc(p.limits)}</p>`:""}${p.env?`<p class="m" style="margin:2px 0">Optional environment variable: <code>${esc(p.env)}</code> (free key, never required)</p>`:""}<p class="m" style="margin:2px 0;font-size:12px"><a href="${esc(p.url)}" target="_blank" rel="noopener" style="color:var(--a)">${esc(p.url)}</a>${p.lastFetched?` · last fetched ${esc(new Date(p.lastFetched).toLocaleString())}`:" · not fetched yet in this session"}</p></div>`;
+  v.innerHTML=`<div class="view"><div class="card"><h3 style="margin-top:0">Sources &amp; methodology</h3><p class="m">${esc(d.verification)}</p><p class="m">Everything here is free: no paid API, subscription or credit card is required. Keys are optional and free. No betting lines or sportsbook data are used anywhere.</p>
+  <div class="res" style="margin-top:8px">${Object.entries(d.labels).map(([k,t])=>`<span class="pill" style="background:var(--p2)">${kindTag(k)} ${esc(t)}</span>`).join("")}</div></div>
+  <div class="card"><h3 style="margin-top:0">Integrated providers</h3>${by("integrated").map(prov).join("")}<h3>Optional (free key) and dataset providers</h3>${by("optional").concat(by("dataset")).map(prov).join("")}<h3>Not integrated, and why</h3>${by("not-integrated").map(prov).join("")}</div>
+  <div class="card"><h3 style="margin-top:0">Calculation formulas (locally calculated statistics)</h3><div class="scroll"><table class="st"><thead><tr><th>Statistic</th><th>Sport</th><th>Formula</th></tr></thead><tbody>${d.formulas.map(f=>`<tr><td>${esc(f.label)}</td><td>${esc(f.sport)}</td><td style="white-space:normal;text-align:left">${esc(f.formula)}</td></tr>`).join("")}</tbody></table></div><p class="m">Provider-supplied figures (for example EPA, CPOE, Dots, Wilks, OPS as published) are shown as provided and are never recomputed. A statistic that needs data the free sources do not supply is marked "data unavailable" instead of being estimated.</p>
+  <h3>Model estimates</h3><p class="m">${esc(d.model)}</p><h3>Attribution</h3><p class="m">nflverse (CC BY 4.0) · Jeff Sackmann / Tennis Abstract tennis data (CC BY-NC-SA 4.0, non-commercial) · Jolpica F1 · MLB Stats API · NHL web API · ESPN public endpoints (unofficial, personal use) · TheSportsDB (free tier) · Cricsheet · OpenPowerlifting · football-data.org (optional).</p></div></div>`}
+ catch(x){v.innerHTML=`<div class="view"><div class="err">Could not load sources: ${esc(x.message)}</div></div>`}}
 
 const views={live,research,fav:favs,src};
-function go(v){clearTimeout(liveTimer);clearTimeout(gameTimer);if(v==="research"){S.player=null;S.data=null;S.err=null;S.loading=false;S.opp=null;S.h2h=null}document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));$("#app").onclick=null;views[v]()}
+function go(v){clearTimeout(liveTimer);clearTimeout(gameTimer);if(v==="research"){S.player=null;S.data=null;S.err=null;S.loading=false;S.opp=null;S.h2h=null;S.profile=null;S.profErr=null;S.cmp=null}document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));$("#app").onclick=null;views[v]()}
 $("#nav").onclick=e=>e.target.dataset.v&&go(e.target.dataset.v);
 $("#tzn")&&($("#tzn").textContent=TZ);
 live();

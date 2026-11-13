@@ -1,34 +1,31 @@
 # Murda Analytics: validation checklist (what was actually verified)
 
-"Mock" = tested against fake provider responses I wrote from community documentation (test/*.js, test/ui.py in real Chromium).
-"Real" = tested against the live provider. **No real provider was reachable from my environment, so every Real column is NOT VERIFIED.**
-Run it yourself: first start `node server.js`, then try the "Live check" steps at the bottom.
+"Mock" = automated tests against sample responses written in each provider's documented format (test/*.js, test/ui*.py in real Chromium). **No real provider was reachable from the build environment**, so nothing is verified against a live service.
 
-| Sport / league | Directory + search | Profile | Team search + roster | Scoreboard (live/upcoming/final) | Box score: team tab | Box score: player tab | Game log / season stats | Real |
+| Sport / league | Search | Profile (season/career) | Game log | H2H | Box score | Advanced | Leaders | Verified against live provider |
 |---|---|---|---|---|---|---|---|---|
-| NBA | mock OK | mock OK | mock OK | mock OK | mock OK | mock OK | mock OK (PRA/PR/PA/RA derived) | not verified |
-| WNBA | same code path as NBA | same | same | same | same | same | same | not verified |
-| NFL | mock OK (position-grouped roster shape) | mock | mock | same path | generic stats pass-through | multi-group tables | same path as NBA | not verified |
-| MLB | mock OK (statsapi roster) | mock | mock | via ESPN scoreboard | generic | generic | mock logic only | not verified |
-| NHL | mock OK (api-web roster) | mock | mock | via ESPN scoreboard | generic | generic | mock logic only | not verified |
-| NCAA Football / Basketball | same code, NOT run: needs hundreds of requests to build | - | - | same path | generic | generic | **unverified, may not exist** | not verified |
-| Soccer (EPL, La Liga, Bundesliga, Serie A, Ligue 1, MLS, Saudi Pro League) | mock OK (7 league directory) | mock OK | mock OK | mock OK | mock OK | mock OK (starters/subs) | mock OK: match history from box scores (goals, assists, shots, SOT); minutes only if ESPN sends them | not verified |
-| Champions League | scoreboard + box score only (no player directory) | - | - | same path | same path | same path | - | not verified |
-| Formula 1 | - | - | - | - | - | - | standings only (Jolpica) | not verified |
-| Tennis, Golf, Cricket | **not supported** | | | | | | | |
+| NBA, WNBA | ESPN roster directory (mock OK) | 3 seasons calculated from logs (mock OK) | ESPN (mock OK) | mock OK | mock OK | TS%, eFG%, per-36, A/TO calculated; PER/usage/ORtg/WS/BPM/VORP unavailable | no | **no** |
+| NFL | ESPN directory + nflverse link (mock OK) | nflverse seasons (mock OK) | nflverse weekly (mock OK) | mock OK | mock OK | passer rating, ANY/A, Y/A, YPC calculated; EPA/CPOE "provider model" | calculated from nflverse (mock OK) | **no** |
+| College FB / BB | ESPN directory (not run: hundreds of requests) | not built | ESPN, unverified | - | mock path | - | no | **no** |
+| MLB | MLB roster directory (mock OK) | official AVG/OBP/SLG/OPS/ERA/WHIP + K%, BB%, ISO calculated (mock OK) | MLB API (mock OK) | mock OK | via ESPN | OPS+, wRC+, wOBA, WAR, FIP, Statcast unavailable | MLB API (mock OK) | **no** |
+| NHL | NHL roster directory (mock OK) | official totals + shooting % calculated (mock OK) | NHL API (mock OK) | mock OK | via ESPN | Corsi, Fenwick, xG unavailable | NHL API (mock OK) | **no** |
+| Soccer (7 leagues) | ESPN directory (mock OK) | current season from match box scores (mock OK) | box scores (mock OK) | mock OK | mock OK | xG, xA, key passes, progressive actions unavailable; per-90 only if minutes supplied | football-data.org (free key, mock OK) | **no** |
+| Formula 1 | Jolpica drivers (mock OK) | official standings per season, career from them (mock OK) | race results (mock OK) | n/a | n/a | wins/podiums/poles/fastest laps/positions gained calculated | standings (mock OK) | **no** |
+| Tennis ATP/WTA | Sackmann players (mock OK) | per-season win %, serve %, BP %, surface splits calculated (mock OK) | match rows (mock OK) | player-vs-player (mock OK) | n/a | all calculated from raw counts | wins/aces (mock OK) | **no** |
+| Cricket | Cricsheet index (needs import; unit tested) | via log | batting/bowling per match | n/a | n/a | strike rate, economy, average calculated | no | **no** |
+| Powerlifting | OPL index (needs import; unit tested) | personal bests | meets; Dots/Wilks/Goodlift as published | n/a | n/a | published values only | no | **no** |
+| Golf, Rugby, other | TheSportsDB (mock OK) | bio + image only | none (no free verified stats source) | n/a | n/a | n/a | n/a | **no** |
 
-## Known gaps
-- Stats you listed that ESPN may not send (xG, big chances, fast-break points, key passes, etc.) are shown as "n/a" / listed as "Not provided", never estimated.
-- Soccer minutes played, key passes etc. appear only if ESPN includes them in the match roster stats.
-- MLB directory = active 26-man rosters (not minor leaguers or injured-list players).
+## Not integrated (and why) - also on the in-app Sources page
+SportsDataverse (wraps ESPN endpoints already used), Kaggle (login + per-dataset licenses), nba_api/stats.nba.com (unofficial, blocks automation), pbpstats (no verified free API), Retrosheet (event files not downloaded), OpenF1 (historical-only free tier; telemetry views not built), football-data.co.uk (not downloaded).
 
-## Live check (5 minutes, after `node server.js`)
-1. http://localhost:8787/api/nba/players?q=lebron  -> should list LeBron James (first request waits while the NBA directory builds).
-2. http://localhost:8787/api/soccer/players?q=mbappe
-3. http://localhost:8787/api/nba/scoreboard -> note a game id, then http://localhost:8787/api/nba/games/<id>
-4. http://localhost:8787/api/health  -> shows which provider hosts succeeded or failed.
-Paste me anything that errors or looks wrong.
+## Honest status
+Every integration was exercised only against sample data in each provider's documented format. Real provider responses may differ in field names. Run the live checks below and report anything that fails.
 
-## Added in the latest version (all mock-tested, none verified against real providers)
-- H2H (NBA, soccer), quarter scoring (team + verified player points), picks (needs ODDS_API_KEY), time-zone fix.
-- The Odds API response format and market names are from memory/docs and unverified. Player props are wired for NBA, NHL and MLB only.
+## Live check (after `node server.js`)
+1. /api/registry and /api/sources
+2. /api/search?q=lebron , /api/search?q=messi , /api/search?q=djokovic
+3. /api/f1/players?q=verstappen , /api/tennis/players?q=alcaraz
+4. /api/nfl/players?q=mahomes then /api/nfl/players/<id>/profile
+5. /api/mlb/players/592450/profile , /api/nhl/players/8478402/profile
+6. /api/insights?sport=mlb , /api/health

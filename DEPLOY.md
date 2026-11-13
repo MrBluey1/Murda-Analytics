@@ -26,3 +26,6 @@ Edit `config/tracked.json` on GitHub (pencil icon) and commit. That triggers a f
 
 ## Keep it alive
 GitHub disables scheduled workflows after 60 days with no repository activity, silently. If snapshots stop updating, check the Actions tab and re-enable the workflow, or push any small commit.
+
+## What the snapshots contain now
+Scoreboards (every ~15 min), plus hourly standings, tracked players' game logs and a roster search index. Profiles, predictions, leaders and game details need the local server. No keys are required.

@@ -3,4 +3,9 @@ data-out/
 out/
 site/
 # Keep the website itself local/private; only the data pipeline is meant for the public repo.
+murda-analytics.html
 edge-analytics.html
+
+# secrets and local caches
+.env
+.cache/
